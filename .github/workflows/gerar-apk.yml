@@ -6,6 +6,7 @@ on:
     paths:
       - 'frota-app/app.json'
       - 'frota-app/app.config.*'
+      - 'frota-app/eas.json'
       - 'frota-app/package.json'
       - 'frota-app/package-lock.json'
       - 'frota-app/fingerprint.config.*'
