@@ -54,7 +54,7 @@ Os workflows ficam em:
 
 O GitHub armazena dois **Repository secrets**:
 
-- `EXPO_TOKEN`: token do Expo usado somente na automação. Foi criado com permissões `VIEW` e `PUBLISH`, limitadas à conta `rafagglo`.
+- `EXPO_TOKEN`: token do Expo usado somente na automação. Está limitado à conta `rafagglo`, com permissões `VIEW`, `PUBLISH`, `RUN` e `ADMIN`; a leitura do ambiente de produção também exige acesso administrativo nessa integração.
 - `ANDROID_KEYSTORE_BASE64`: cópia codificada da chave que assina o APK local, para manter compatibilidade de instalação. Base64 não é criptografia; o valor fica protegido como secret do GitHub.
 
 Não coloque os valores desses secrets no código, em mensagens ou nos logs. Se precisar substituir o token, crie outro no [painel de tokens do Expo](https://expo.dev/settings/access-tokens) e atualize `EXPO_TOKEN` nas [configurações do GitHub](https://github.com/RafaelGGlo/Sistema-de-checklist/settings/secrets/actions).
