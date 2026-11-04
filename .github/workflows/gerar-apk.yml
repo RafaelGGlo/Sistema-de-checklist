@@ -69,6 +69,8 @@ jobs:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/debug.keystore
+      - name: Calcular runtime esperado
+        run: npx expo-updates runtimeversion:resolve --platform android > .ci-runtime.json
       - name: Compilar APK ARM64
         env:
           NODE_ENV: production
@@ -76,6 +78,15 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' --max-workers=2 --console=plain
+      - name: Verificar compatibilidade do APK
+        run: |
+          expected=$(node -p "JSON.parse(require('fs').readFileSync('.ci-runtime.json', 'utf8')).runtimeVersion")
+          actual=$(unzip -p android/app/build/outputs/apk/release/app-release.apk assets/fingerprint)
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Runtime do APK ($actual) difere do runtime de atualização ($expected)."
+            exit 1
+          fi
+          echo "Runtime compatível: $actual"
       - name: Preparar download
         run: |
           mkdir -p apk

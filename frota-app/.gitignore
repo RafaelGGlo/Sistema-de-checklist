@@ -47,3 +47,4 @@ example
 /ninja-debug.log
 /dist-update-check/
 /.ci-secrets/
+/.ci-runtime.json

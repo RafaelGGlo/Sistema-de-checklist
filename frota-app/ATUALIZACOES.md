@@ -41,6 +41,8 @@ Trocas de SDK, bibliotecas nativas, permissões, ícone, plugins e configuraçõ
 
 O workflow **Gerar APK** é acionado automaticamente por alterações em `app.json`, `app.config.*`, dependências, configuração do fingerprint, plugins e assets. Ele compila na infraestrutura do GitHub, conserva a assinatura configurada e publica o arquivo em Releases. A regra é conservadora: algumas alterações apenas em imagens também podem gerar APK.
 
+Antes de publicar o APK, o workflow confere se seu runtime embutido coincide com o calculado para as atualizações. Arquivos temporários do compilador Kotlin são excluídos desse cálculo, para manter o resultado estável durante a compilação.
+
 Nesse caso, baixe e instale o novo APK. A distribuição por arquivo não permite instalar um APK silenciosamente em um Android comum: o sistema pede confirmação. Depois da instalação, as atualizações compatíveis voltam a chegar pelo Expo. Publicar na Play Store é uma etapa separada, não configurada aqui.
 
 O APK gerado é ARM64. Para suportar aparelhos Android de 32 bits, será necessária outra configuração de compilação.
