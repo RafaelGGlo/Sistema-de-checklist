@@ -1,0 +1,54 @@
+name: Atualizar aplicativo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frota-app/**'
+      - '.github/workflows/atualizar-app.yml'
+      - '.gitattributes'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frota-update-production
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frota-app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frota-app/package-lock.json
+      - name: Conferir acesso ao Expo
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo '::error::Configure o secret EXPO_TOKEN no repositório. Consulte frota-app/ATUALIZACOES.md.'
+            exit 1
+          fi
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: 27.4.1
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npm ci
+      - name: Testar regras do checklist
+        run: node --test tests/checklist-model.test.mjs
+      - name: Publicar atualização Android
+        env:
+          EXPO_NO_DOTENV: '1'
+        run: eas update --channel production --platform android --environment production --message "GitHub ${GITHUB_SHA}" --non-interactive
+      - name: Explicar resultado
+        run: |
+          echo '### Atualização publicada' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Celulares com um APK de runtime compatível baixarão a atualização ao abrir o app. Mudanças nativas exigem instalar o APK novo gerado pelo workflow Gerar APK.' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,90 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frota-app/app.json'
+      - 'frota-app/app.config.*'
+      - 'frota-app/package.json'
+      - 'frota-app/package-lock.json'
+      - 'frota-app/fingerprint.config.*'
+      - 'frota-app/.fingerprintignore'
+      - 'frota-app/plugins/**'
+      - 'frota-app/assets/**'
+      - '.github/workflows/gerar-apk.yml'
+      - '.gitattributes'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: frota-apk-production
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: frota-app
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frota-app/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Conferir configuração
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ] || [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo '::error::Configure EXPO_TOKEN e ANDROID_KEYSTORE_BASE64. Consulte frota-app/ATUALIZACOES.md.'
+            exit 1
+          fi
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: 27.4.1
+          token: ${{ secrets.EXPO_TOKEN }}
+      - run: npm ci
+      - run: node --test tests/checklist-model.test.mjs
+      - name: Carregar configuração de produção
+        run: eas env:pull --environment production --path .env.local --non-interactive
+      - name: Preparar Android
+        run: npx expo prebuild --platform android --no-install
+      - name: Restaurar assinatura do APK já distribuído
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/debug.keystore
+      - name: Compilar APK ARM64
+        env:
+          NODE_ENV: production
+        working-directory: frota-app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' --max-workers=2 --console=plain
+      - name: Preparar download
+        run: |
+          mkdir -p apk
+          cp android/app/build/outputs/apk/release/app-release.apk apk/Frota-Junco.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Frota-Junco-APK
+          path: frota-app/apk/Frota-Junco.apk
+      - name: Publicar APK para download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "android-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" apk/Frota-Junco.apk --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Frota Junco — APK ${GITHUB_RUN_NUMBER}" --notes 'APK ARM64 com atualizações automáticas pelo canal production. Instale esta versão quando houver mudanças nativas.' --latest
+          echo '### APK disponível' >> "$GITHUB_STEP_SUMMARY"
+          echo "[Baixar Frota-Junco.apk](https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/Frota-Junco.apk)" >> "$GITHUB_STEP_SUMMARY"

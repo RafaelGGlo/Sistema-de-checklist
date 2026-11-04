@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "frota-app",
+    "name": "Frota Junco",
     "slug": "frota-app",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -10,7 +10,41 @@
       "supportsTablet": true
     },
     "android": {
-      "edgeToEdge": true
+      "package": "com.frotajunco.app",
+      "edgeToEdge": true,
+      "versionCode": 2,
+      "runtimeVersion": {
+        "policy": "fingerprint"
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permitir que Frota Junco fotografe o veículo durante o checklist.",
+          "recordAudioAndroid": false,
+          "microphonePermission": false,
+          "barcodeScannerEnabled": false
+        }
+      ],
+      "expo-image",
+      "expo-sharing",
+      "expo-splash-screen",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7391fc7d-1697-44ed-ae63-465eed1c0cfc"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/7391fc7d-1697-44ed-ae63-465eed1c0cfc",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0,
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
     }
   }
 }

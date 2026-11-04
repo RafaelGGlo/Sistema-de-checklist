@@ -6,6 +6,7 @@ node_modules/
 # Expo
 .expo/
 dist/
+dist-supabase-check/
 web-build/
 expo-env.d.ts
 
@@ -41,3 +42,8 @@ example
 # generated native folders
 /ios
 /android
+/apk/
+/*build.log
+/ninja-debug.log
+/dist-update-check/
+/.ci-secrets/
