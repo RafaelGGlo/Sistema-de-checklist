@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import SignatureScreen from 'react-native-signature-canvas';
+import SignatureScreen from './Assinatura';
+import { gerarPdf, compartilharPdf } from './pdf';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera } from 'expo-camera';
 import { salvarChecklist } from '../lib/frota';
@@ -46,6 +47,9 @@ export default function ChecklistScreen({ route, navigation }) {
   const [erro, setErro] = useState('');
   const [assinando, setAssinando] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [concluido, setConcluido] = useState(null);
+  const pdf = useRef(null);
+  const salvo = useRef(null);
   const trava = useRef(false);
   const assinatura = useRef(null);
   const andamento = progresso(form);
@@ -99,14 +103,29 @@ export default function ChecklistScreen({ route, navigation }) {
     } else setAssinando(true);
   }
   async function enviar(imagemAssinatura) {
-    if (trava.current) return;
+    if (trava.current || salvo.current) return;
     if (!form.km.trim() || !imagemAssinatura) { setErro('Informe o KM e registre sua assinatura.'); return; }
     trava.current = true; setSalvando(true); setErro('');
     try {
-      await salvarChecklist(montarChecklist(veiculo, nomeMotorista, form, fotos, imagemAssinatura));
+      const dados = montarChecklist(veiculo, perfil?.nome || nomeMotorista, form, fotos, imagemAssinatura);
+      await salvarChecklist(dados);
+      salvo.current = dados;
+      setConcluido(dados);
       await draft.limparRascunho();
-      setAssinando(false); navigation.goBack();
+      try {
+        pdf.current = await gerarPdf(dados);
+        await compartilharPdf(pdf.current);
+      } catch { setErro('Checklist salvo. Não foi possível abrir o PDF. Toque em Compartilhar PDF para tentar novamente.'); }
     } catch (error) { setErro(error.message || 'Falha ao salvar o checklist. Seu rascunho foi mantido.'); }
+    finally { trava.current = false; setSalvando(false); }
+  }
+  async function repetirPdf() {
+    if (trava.current) return;
+    trava.current = true; setSalvando(true); setErro('');
+    try {
+      if (!pdf.current) pdf.current = await gerarPdf(concluido);
+      await compartilharPdf(pdf.current);
+    } catch { setErro('Não foi possível abrir o PDF. Tente novamente. O checklist já está salvo.'); }
     finally { trava.current = false; setSalvando(false); }
   }
   if (!pronto) return <SafeAreaView style={s.container}><Botao onPress={() => navigation.goBack()}>← Voltar</Botao>{draft.erro ? <Text accessibilityRole="alert" style={s.erro}>{draft.erro}</Text> : <ActivityIndicator accessibilityLabel="Recuperando checklist" color="#5db0d6" />}</SafeAreaView>;
@@ -179,14 +198,12 @@ export default function ChecklistScreen({ route, navigation }) {
       <ScrollView>{importacao.map(foto => <View key={foto.slot.id} style={s.secao}><Text style={s.tituloCategoria}>{foto.slot.label}</Text><Text style={s.ajuda}>{foto.slot.orientacao}</Text><Image source={{ uri: foto.imagem }} style={s.previewGaleria} resizeMode="contain" /></View>)}</ScrollView>
       <Botao disabled={ocupado} onPress={() => setImportacao(null)}>Cancelar importação</Botao><Botao principal disabled={ocupado} onPress={importar}>{ocupado ? 'Guardando...' : 'Confirmar fotos'}</Botao>
     </SafeAreaView></Modal>}
-    <Modal visible={assinando} animationType="slide" onRequestClose={() => { if (!salvando) setAssinando(false); }}><SafeAreaView style={s.telaModal}>
+    <Modal visible={assinando} animationType="slide" onRequestClose={() => { if (!salvando) { setAssinando(false); if (salvo.current) navigation.goBack(); } }}><SafeAreaView style={s.telaModal}>
       <Text style={s.titulo}>Assinatura do motorista</Text><Text style={s.ajuda}>Assine com o dedo no quadro branco.</Text>
-      {Platform.OS === 'web' ? <Text style={s.erro}>A assinatura deve ser feita no aplicativo Android.</Text> : <View style={s.assinatura}><SignatureScreen ref={assinatura} onOK={enviar} onEmpty={() => setErro('Registre sua assinatura antes de enviar.')} webStyle=".m-signature-pad--footer {display: none;}" /></View>}
+      {concluido ? <Text accessibilityRole="status" style={s.ajuda}>Checklist salvo com sucesso. Compartilhe o PDF por WhatsApp, e-mail ou outro aplicativo. {Platform.OS === 'web' ? 'Na janela de impressão, selecione Salvar como PDF.' : ''}</Text> : <View style={s.assinatura}>{assinando && <SignatureScreen ref={assinatura} onOK={enviar} onEmpty={() => setErro('Registre sua assinatura antes de enviar.')} onBegin={() => setErro('')} onError={() => setErro('Não foi possível carregar a assinatura. Volte ao checklist e tente novamente.')} imageType="image/png" backgroundColor="#ffffff" penColor="#111111" androidLayerType="software" webStyle=".m-signature-pad {box-shadow: none; border: none; margin: 0; top: 0; left: 0; width: 100%; height: 100%;} .m-signature-pad--body {border: none; inset: 0;} .m-signature-pad--footer {display: none;}" />}</View>}
       {!!erro && <Text accessibilityRole="alert" style={s.erro}>{erro}</Text>}
       {salvando && <ActivityIndicator color="#5db0d6" />}
-      <Botao principal disabled={salvando || Platform.OS === 'web'} onPress={() => assinatura.current?.readSignature()}>{salvando ? 'Enviando...' : 'Confirmar e enviar'}</Botao>
-      <Botao disabled={salvando} onPress={() => assinatura.current?.clearSignature()}>Limpar assinatura</Botao>
-      <Botao disabled={salvando} onPress={() => setAssinando(false)}>Voltar ao checklist</Botao>
+      {concluido ? <><Botao principal disabled={salvando} onPress={repetirPdf}>{salvando ? 'Preparando PDF...' : 'Compartilhar PDF'}</Botao><Botao disabled={salvando} onPress={() => { setAssinando(false); navigation.goBack(); }}>Concluir</Botao></> : <><Botao principal disabled={salvando} onPress={() => assinatura.current?.readSignature()}>{salvando ? 'Enviando e gerando PDF...' : 'Confirmar e enviar'}</Botao><Botao disabled={salvando} onPress={() => assinatura.current?.clearSignature()}>Limpar assinatura</Botao><Botao disabled={salvando} onPress={() => setAssinando(false)}>Voltar ao checklist</Botao></>}
     </SafeAreaView></Modal>
   </SafeAreaView>;
 }

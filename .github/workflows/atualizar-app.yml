@@ -43,7 +43,7 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
       - run: npm ci
       - name: Testar regras do checklist
-        run: node --test tests/checklist-model.test.mjs
+        run: node --test tests/checklist-model.test.mjs tests/checklist-pdf.test.mjs
       - name: Publicar atualização Android
         env:
           EXPO_NO_DOTENV: '1'
