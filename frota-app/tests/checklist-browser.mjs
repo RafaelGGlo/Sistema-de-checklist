@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || '@playwright/test');
-const root = resolve('artifacts/checklist-web');
+const root = resolve(process.env.CHECKLIST_WEB_ROOT || 'artifacts/checklist-web');
 const servidor = createServer(async (req, res) => {
   try {
     const path = resolve(root, '.' + new URL(req.url, 'http://local').pathname.replace(/\/$/, '/index.html'));
@@ -14,11 +14,22 @@ const servidor = createServer(async (req, res) => {
   } catch { res.writeHead(404).end(); }
 });
 await new Promise(r => servidor.listen(8084, '127.0.0.1', r));
-const browser = await chromium.launch({ headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
+const browser = await chromium.launch({ ...(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {}), headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ['camera'] });
   const page = await context.newPage();
-  const erros = []; page.on('pageerror', e => erros.push(e.message));
+  await page.addInitScript(() => {
+    window.compartilhamentos = [];
+    window.permiteCompartilhar = true;
+    Object.defineProperty(navigator, 'canShare', { configurable: true, value: ({ files }) => window.permiteCompartilhar && files.every(file => file.type === 'application/pdf') });
+    Object.defineProperty(navigator, 'share', { configurable: true, value: async ({ files }) => {
+      const ativo = navigator.userActivation.isActive;
+      const arquivo = files[0];
+      window.compartilhamentos.push({ nome: arquivo.name, tipo: arquivo.type, tamanho: arquivo.size, ativo, cabecalho: (await arquivo.text()).slice(0, 5) });
+      if (window.compartilhamentos.length === 1) throw new DOMException('Cancelado pelo usuário', 'AbortError');
+    } });
+  });
+  const erros = []; page.on('pageerror', e => { erros.push(e.message); console.error(e.message); });
   const usuario = { id: '11111111-1111-4111-8111-111111111111', aud: 'authenticated', role: 'authenticated', email: 'motorista@teste.local', app_metadata: {}, user_metadata: {} };
   const perfil = { ...usuario, nome: 'Motorista Teste', perfil: 'motorista', ativo: true };
   const token = [Buffer.from('{}').toString('base64url'), Buffer.from(JSON.stringify({ sub: usuario.id, exp: Math.floor(Date.now()/1000) + 3600 })).toString('base64url'), 'teste'].join('.');
@@ -131,6 +142,39 @@ try {
   await page.screenshot({ path: 'artifacts/checklist-480.png' });
   await page.setViewportSize({ width: 320, height: 740 });
   await page.screenshot({ path: 'artifacts/checklist-320.png' });
+  await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar e enviar', exact: true }).click();
+  await page.getByText('Registre sua assinatura antes de enviar.', { exact: true }).last().waitFor();
+  assert.equal(envios, 0);
+  const quadro = await page.locator('canvas').boundingBox();
+  await page.mouse.move(quadro.x + 20, quadro.y + 30); await page.mouse.down();
+  await page.mouse.move(quadro.x + 150, quadro.y + 90, { steps: 15 }); await page.mouse.up();
+  await page.getByRole('button', { name: 'Confirmar e enviar', exact: true }).click();
+  const compartilhar = page.getByRole('button', { name: 'Compartilhar PDF', exact: true });
+  await compartilhar.waitFor();
+  await page.waitForFunction(() => !Array.from(document.querySelectorAll('[role="button"]')).find(e => e.textContent === 'Preparando PDF...'));
+  assert.equal(await page.getByRole('dialog').count(), 0, 'Compartilhamento ocorre fora do modal de assinatura');
+  await compartilhar.click(); // Cancelar o seletor não é erro e permite compartilhar de novo.
+  await page.waitForFunction(() => window.compartilhamentos.length === 1);
+  await compartilhar.click();
+  await page.waitForFunction(() => window.compartilhamentos.length === 2);
+  const compartilhados = await page.evaluate(() => window.compartilhamentos);
+  assert.equal(compartilhados.length, 2);
+  for (const arquivo of compartilhados) {
+    assert.equal(arquivo.tipo, 'application/pdf');
+    assert.equal(arquivo.cabecalho, '%PDF-');
+    assert.ok(arquivo.tamanho > 1000);
+    assert.ok(arquivo.ativo, 'Compartilhamento web mantém o gesto do usuário');
+    assert.match(arquivo.nome, /^Checklist-ABC1234-\d{14}\.pdf$/);
+  }
+  await page.evaluate(() => { window.permiteCompartilhar = false; });
+  const downloadPromise = page.waitForEvent('download');
+  await compartilhar.click();
+  const download = await downloadPromise;
+  const baixado = await readFile(await download.path());
+  assert.equal(baixado.subarray(0, 5).toString(), '%PDF-');
+  assert.equal(envios, 1, 'Compartilhar, cancelar e baixar não reenviam o checklist');
+  assert.equal(await page.getByRole('alert').count(), 0);
   assert.deepEqual(erros, []);
-  console.log('PASS: checklist compacto, confirmação em grupo, edição individual, seta condicional, validação do KM, seis capturas com câmera montada, refazer, interrupção e retomada, galeria múltipla com confirmação/cancelamento, nenhum envio durante captura, rascunho após voltar e recarregar.');
+  console.log('PASS: checklist, câmera, galeria, rascunho, assinatura, PDF binário, compartilhamento com gesto do usuário, cancelamento, download e ausência de envio duplicado.');
 } finally { await browser.close(); await new Promise(r => servidor.close(r)); }

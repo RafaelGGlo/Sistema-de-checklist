@@ -48,6 +48,7 @@ export default function ChecklistScreen({ route, navigation }) {
   const [assinando, setAssinando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [concluido, setConcluido] = useState(null);
+  const [etapaPdf, setEtapaPdf] = useState('');
   const pdf = useRef(null);
   const salvo = useRef(null);
   const trava = useRef(false);
@@ -111,23 +112,43 @@ export default function ChecklistScreen({ route, navigation }) {
       await salvarChecklist(dados);
       salvo.current = dados;
       setConcluido(dados);
+      setAssinando(false);
+      setEtapaPdf('Gerando PDF com fotos e assinatura...');
       await draft.limparRascunho();
       try {
+        // Aguarda o fechamento do Modal antes de abrir uma atividade do Android.
+        await new Promise(resolve => setTimeout(resolve, 400));
         pdf.current = await gerarPdf(dados);
-        await compartilharPdf(pdf.current);
-      } catch { setErro('Checklist salvo. Não foi possível abrir o PDF. Toque em Compartilhar PDF para tentar novamente.'); }
+        if (Platform.OS !== 'web') {
+          setEtapaPdf('Escolha o aplicativo para compartilhar o PDF.');
+          await compartilharPdf(pdf.current);
+        }
+      } catch (error) { setErro(`Checklist salvo. ${error.message || 'Não foi possível abrir o PDF.'} Toque no botão abaixo para tentar novamente.`); }
     } catch (error) { setErro(error.message || 'Falha ao salvar o checklist. Seu rascunho foi mantido.'); }
-    finally { trava.current = false; setSalvando(false); }
+    finally { trava.current = false; setSalvando(false); setEtapaPdf(''); }
   }
   async function repetirPdf() {
     if (trava.current) return;
     trava.current = true; setSalvando(true); setErro('');
     try {
-      if (!pdf.current) pdf.current = await gerarPdf(concluido);
+      if (!pdf.current) { setEtapaPdf('Gerando PDF com fotos e assinatura...'); pdf.current = await gerarPdf(concluido); }
+      setEtapaPdf('Escolha o aplicativo para compartilhar o PDF.');
       await compartilharPdf(pdf.current);
-    } catch { setErro('Não foi possível abrir o PDF. Tente novamente. O checklist já está salvo.'); }
-    finally { trava.current = false; setSalvando(false); }
+    } catch (error) { pdf.current = null; setErro(`${error.message || 'Não foi possível abrir o PDF.'} O checklist já está salvo.`); }
+    finally { trava.current = false; setSalvando(false); setEtapaPdf(''); }
   }
+  if (concluido) return <SafeAreaView style={s.container}>
+    <View style={[s.conteudo, { padding: 20, gap: 12 }]}>
+      <Text accessibilityRole="header" style={s.titulo}>Checklist enviado</Text>
+      <Text style={s.ajuda}>{concluido.nomeVeiculo} • {concluido.placa}</Text>
+      <Text accessibilityRole="status" style={s.ajuda}>{etapaPdf || 'Seu checklist está salvo. Toque em Compartilhar PDF para escolher WhatsApp, e-mail ou outro aplicativo.'}</Text>
+      {Platform.OS === 'web' && <Text style={s.ajuda}>Se o navegador não oferecer compartilhamento de arquivos, o PDF será baixado.</Text>}
+      {salvando && <ActivityIndicator accessibilityLabel={etapaPdf || 'Preparando PDF'} color="#5db0d6" />}
+      {!!erro && <Text accessibilityRole="alert" style={s.erro}>{erro}</Text>}
+      <Botao principal disabled={salvando} onPress={repetirPdf}>{salvando ? 'Preparando PDF...' : 'Compartilhar PDF'}</Botao>
+      <Botao disabled={salvando} onPress={() => navigation.goBack()}>Concluir</Botao>
+    </View>
+  </SafeAreaView>;
   if (!pronto) return <SafeAreaView style={s.container}><Botao onPress={() => navigation.goBack()}>← Voltar</Botao>{draft.erro ? <Text accessibilityRole="alert" style={s.erro}>{draft.erro}</Text> : <ActivityIndicator accessibilityLabel="Recuperando checklist" color="#5db0d6" />}</SafeAreaView>;
   const listaCaptura = pendentes.length ? pendentes : FOTOS;
   return <SafeAreaView style={s.container}>
@@ -200,10 +221,10 @@ export default function ChecklistScreen({ route, navigation }) {
     </SafeAreaView></Modal>}
     <Modal visible={assinando} animationType="slide" onRequestClose={() => { if (!salvando) { setAssinando(false); if (salvo.current) navigation.goBack(); } }}><SafeAreaView style={s.telaModal}>
       <Text style={s.titulo}>Assinatura do motorista</Text><Text style={s.ajuda}>Assine com o dedo no quadro branco.</Text>
-      {concluido ? <Text accessibilityRole="status" style={s.ajuda}>Checklist salvo com sucesso. Compartilhe o PDF por WhatsApp, e-mail ou outro aplicativo. {Platform.OS === 'web' ? 'Na janela de impressão, selecione Salvar como PDF.' : ''}</Text> : <View style={s.assinatura}>{assinando && <SignatureScreen ref={assinatura} onOK={enviar} onEmpty={() => setErro('Registre sua assinatura antes de enviar.')} onBegin={() => setErro('')} onError={() => setErro('Não foi possível carregar a assinatura. Volte ao checklist e tente novamente.')} imageType="image/png" backgroundColor="#ffffff" penColor="#111111" androidLayerType="software" webStyle=".m-signature-pad {box-shadow: none; border: none; margin: 0; top: 0; left: 0; width: 100%; height: 100%;} .m-signature-pad--body {border: none; inset: 0;} .m-signature-pad--footer {display: none;}" />}</View>}
+      {<View style={s.assinatura}>{assinando && <SignatureScreen ref={assinatura} onOK={enviar} onEmpty={() => setErro('Registre sua assinatura antes de enviar.')} onBegin={() => setErro('')} onError={() => setErro('Não foi possível carregar a assinatura. Volte ao checklist e tente novamente.')} imageType="image/png" backgroundColor="#ffffff" penColor="#111111" androidLayerType="software" webStyle=".m-signature-pad {box-shadow: none; border: none; margin: 0; top: 0; left: 0; width: 100%; height: 100%;} .m-signature-pad--body {border: none; inset: 0;} .m-signature-pad--footer {display: none;}" />}</View>}
       {!!erro && <Text accessibilityRole="alert" style={s.erro}>{erro}</Text>}
       {salvando && <ActivityIndicator color="#5db0d6" />}
-      {concluido ? <><Botao principal disabled={salvando} onPress={repetirPdf}>{salvando ? 'Preparando PDF...' : 'Compartilhar PDF'}</Botao><Botao disabled={salvando} onPress={() => { setAssinando(false); navigation.goBack(); }}>Concluir</Botao></> : <><Botao principal disabled={salvando} onPress={() => assinatura.current?.readSignature()}>{salvando ? 'Enviando e gerando PDF...' : 'Confirmar e enviar'}</Botao><Botao disabled={salvando} onPress={() => assinatura.current?.clearSignature()}>Limpar assinatura</Botao><Botao disabled={salvando} onPress={() => setAssinando(false)}>Voltar ao checklist</Botao></>}
+      {<><Botao principal disabled={salvando} onPress={() => assinatura.current?.readSignature()}>{salvando ? 'Enviando e gerando PDF...' : 'Confirmar e enviar'}</Botao><Botao disabled={salvando} onPress={() => assinatura.current?.clearSignature()}>Limpar assinatura</Botao><Botao disabled={salvando} onPress={() => setAssinando(false)}>Voltar ao checklist</Botao></>}
     </SafeAreaView></Modal>
   </SafeAreaView>;
 }

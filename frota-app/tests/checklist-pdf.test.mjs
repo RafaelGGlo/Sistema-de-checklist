@@ -2,6 +2,46 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { htmlChecklist } from '../src/checklist/relatorio.mjs';
 import { formularioInicial, montarChecklist } from '../src/checklist/model.mjs';
+import { documentoChecklist, nomePdf } from '../src/checklist/pdfDocumento.mjs';
+import { PDFDocument, PDFName } from 'pdf-lib';
+
+const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==';
+function exemplo() {
+  const veiculo = { id: 'v1', nome: 'Caminhão de inspeção', placa: 'ABC1D23' };
+  const form = formularioInicial(veiculo); form.km = '12345';
+  return montarChecklist(veiculo, 'José da Silva', form,
+    Object.fromEntries(['painel', 'cabine', 'ldEsq', 'ldDir', 'traseira', 'frente'].map(id => [id, png])), png);
+}
+
+test('gera um PDF binário válido com assinatura, seis imagens e páginas A4', async () => {
+  const dados = exemplo();
+  const doc = await documentoChecklist(dados);
+  const bytes = await doc.save();
+  assert.equal(new TextDecoder().decode(bytes.slice(0, 5)), '%PDF-');
+  const aberto = await PDFDocument.load(bytes);
+  assert.equal(aberto.getPageCount(), 2);
+  assert.equal(aberto.getTitle(), 'Checklist ABC1D23');
+  let imagens = 0;
+  for (const page of aberto.getPages()) {
+    assert.ok(Math.abs(page.getSize().width - 595.28) < 0.01);
+    imagens += page.node.Resources().lookup(PDFName.of('XObject'))?.keys().length || 0;
+  }
+  assert.equal(imagens, 7);
+  assert.match(nomePdf(dados), /^Checklist-ABC1D23-\d{14}\.pdf$/);
+});
+
+test('observações longas e caracteres fora do alfabeto não interrompem a geração', async () => {
+  const dados = exemplo();
+  dados.obsGeral = ('Texto com acentuação, inspeção e segurança 🚚.\n' + 'A'.repeat(180) + '\n').repeat(40);
+  const doc = await documentoChecklist(dados);
+  assert.ok(doc.getPageCount() > 2);
+  await PDFDocument.load(await doc.save());
+});
+
+test('imagem corrompida apresenta erro em vez de compartilhar PDF incompleto', async () => {
+  const dados = exemplo(); dados.fotos.painel = 'data:image/jpeg;base64,aGVsbG8=';
+  await assert.rejects(documentoChecklist(dados), /foto ou assinatura está inválida/);
+});
 
 test('relatório inclui avaliações, identificação, assinatura e seis fotos', () => {
   const veiculo = { id: 'v1', nome: 'Van', placa: 'ABC1234' };
