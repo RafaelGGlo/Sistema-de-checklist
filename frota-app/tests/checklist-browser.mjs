@@ -74,6 +74,7 @@ try {
   await page.getByRole('radio', { name: 'Lâmpada da Seta Esquerda (E): TRASEIRA', exact: true }).click();
   await page.getByLabel('KM atual', { exact: true }).fill('');
   await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
+  assert.equal(await page.getByRole('dialog').count(), 0, 'Assinatura não cria uma janela nativa sobre o aplicativo');
   await page.getByText('Informe o KM atual antes de assinar!', { exact: true }).waitFor();
   await page.getByLabel('KM atual', { exact: true }).fill('1000');
   await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
@@ -152,6 +153,8 @@ try {
   await page.getByRole('button', { name: 'Confirmar e enviar', exact: true }).click();
   const compartilhar = page.getByRole('button', { name: 'Compartilhar PDF', exact: true });
   await compartilhar.waitFor();
+  await page.getByRole('heading', { name: 'PDF pronto para compartilhar', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.compartilhamentos.length), 0, 'O seletor abre somente pelo botão com o PDF pronto');
   await page.waitForFunction(() => !Array.from(document.querySelectorAll('[role="button"]')).find(e => e.textContent === 'Preparando PDF...'));
   assert.equal(await page.getByRole('dialog').count(), 0, 'Compartilhamento ocorre fora do modal de assinatura');
   await compartilhar.click(); // Cancelar o seletor não é erro e permite compartilhar de novo.
