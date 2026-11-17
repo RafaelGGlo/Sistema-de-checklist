@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+const { PGlite } = await import(process.env.PGLITE_MODULE || '@electric-sql/pglite');
+const db = new PGlite();
+await db.exec(`
+CREATE ROLE anon; CREATE ROLE authenticated;
+CREATE SCHEMA auth; CREATE SCHEMA storage;
+CREATE TABLE auth.users(id uuid PRIMARY KEY,email text,raw_user_meta_data jsonb);
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid';
+CREATE TABLE storage.buckets(id text PRIMARY KEY,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
+CREATE TABLE storage.objects(bucket_id text,name text);
+CREATE FUNCTION storage.foldername(text) RETURNS text[] LANGUAGE sql AS 'SELECT string_to_array($1,''/'')';
+`);
+await db.exec(await readFile(new URL('../002_supabase.sql',import.meta.url),'utf8'));
+// Simula o vinculo restritivo que existia na instalacao anterior.
+await db.exec(`ALTER TABLE public.usuarios DROP CONSTRAINT usuarios_id_fkey;
+ALTER TABLE public.usuarios ADD CONSTRAINT usuarios_id_fkey FOREIGN KEY(id) REFERENCES auth.users(id) ON DELETE RESTRICT;`);
+const uid='11111111-1111-4111-8111-111111111111';
+await db.query("INSERT INTO auth.users VALUES ($1,'teste@gmail.com','{}')",[uid]);
+await db.query("INSERT INTO public.veiculos(id,nome,placa,tipo,motorista_atual_id) VALUES ('v1','Van','ABC1234','Van',$1)",[uid]);
+await db.query("INSERT INTO public.viagens(id,veiculo_id,motorista_id,motorista,nome_veiculo,placa,saida_em) VALUES ('t1','v1',$1,'Teste','Van','ABC1234',now())",[uid]);
+await assert.rejects(db.query('DELETE FROM auth.users WHERE id=$1',[uid]),/foreign key/);
+const sql=await readFile(new URL('../004_corrigir_exclusao_usuarios.sql',import.meta.url),'utf8');
+await db.exec(sql);
+await db.exec(sql);
+await db.query('DELETE FROM auth.users WHERE id=$1',[uid]);
+assert.equal((await db.query('SELECT * FROM public.usuarios')).rows.length,0);
+const trip=(await db.query('SELECT * FROM public.viagens')).rows[0];
+assert.equal(trip.motorista_id,null);
+assert.equal(trip.motorista,'Teste');
+assert.equal((await db.query('SELECT motorista_atual_id FROM public.veiculos')).rows[0].motorista_atual_id,null);
+await db.close();
+console.log('PASS: exclusao desbloqueada, perfil removido, veiculo e historico preservados.');

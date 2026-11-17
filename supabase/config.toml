@@ -1,0 +1,3 @@
+[functions.gerenciar-usuarios]
+# O token é validado por auth.getUser no handler, inclusive com chaves JWT novas.
+verify_jwt = false

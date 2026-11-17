@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, 
-  Modal, ActivityIndicator, Alert, BackHandler
+  Modal, ActivityIndicator, Alert, BackHandler, Platform, ScrollView, KeyboardAvoidingView
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -43,6 +43,11 @@ function verificarAlertaRevisao(kmAtualStr, kmRevStr) {
   return null;
 }
 
+function FeedbackOperacao({ mensagem }) {
+  if (!mensagem) return null;
+  return <Text role={mensagem.erro ? 'alert' : 'status'} accessibilityLiveRegion="polite" style={{ color: mensagem.erro ? '#ff8a80' : '#a5d6a7', padding: 12, fontSize: 14 }}>{mensagem.texto}</Text>;
+}
+
 // ================= TELA 1: LOGIN =================
 function LoginScreen({ aoLogar, erroSessao }) {
   const [nome, setNome] = useState('');
@@ -73,7 +78,9 @@ function LoginScreen({ aoLogar, erroSessao }) {
   };
 
   return (
-    <View style={styles.containerLogin}>
+    <KeyboardAvoidingView style={styles.containerLogin} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView style={styles.scrollLogin} contentContainerStyle={styles.conteudoLogin} keyboardShouldPersistTaps="handled">
+      <View style={styles.formularioLogin}>
       <UpdateNotice blocked={carregando} />
       <Text style={styles.tituloApp}>🚛 Frota Junco</Text>
       <Text style={styles.subtituloApp}>Acesso do Motorista</Text>
@@ -103,7 +110,9 @@ function LoginScreen({ aoLogar, erroSessao }) {
       <TouchableOpacity style={styles.botaoPrincipal} onPress={fazerLogin} disabled={carregando}>
         {carregando ? <ActivityIndicator color="#fff" /> : <Text style={styles.txtBotao}>Entrar no Sistema</Text>}
       </TouchableOpacity>
-    </View>
+      </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -128,19 +137,23 @@ function HomeScreen({ navigation, aoDeslogar }) {
 
   const [kmRetorno, setKmRetorno] = useState('');
   const [ocupado, setOcupado] = useState(false);
+  const [mensagem, setMensagem] = useState(null);
+  const [erroDados, setErroDados] = useState('');
+  const [versaoDados, setVersaoDados] = useState(0);
   const operacaoEmCurso = useRef(false);
   const executar = async (acao) => {
     if (operacaoEmCurso.current) return;
-    operacaoEmCurso.current = true; setOcupado(true);
+    operacaoEmCurso.current = true; setOcupado(true); setMensagem(null);
     try { await acao(); }
-    catch (error) { Alert.alert('Erro', error.message || 'Falha ao salvar.'); }
+    catch (error) { setMensagem({ erro: true, texto: error.message || 'Falha ao salvar.' }); }
     finally { operacaoEmCurso.current = false; setOcupado(false); }
   };
 
   useEffect(() => {
     let ativo = true;
     const cancelar = [];
-    const erro = error => Alert.alert('Erro ao carregar', error.message);
+    setErroDados('');
+    const erro = error => { if (ativo) setErroDados(error.message || 'Não foi possível carregar os dados.'); };
     perfilAtual().then(perfil => {
       if (!ativo) return;
       setNomeMotorista(formatarPrimeiroNome(perfil.nome));
@@ -151,7 +164,7 @@ function HomeScreen({ navigation, aoDeslogar }) {
       );
     }).catch(erro);
     return () => { ativo = false; cancelar.forEach(fn => fn()); };
-  }, []);
+  }, [versaoDados]);
 
   useEffect(() => {
     const backAction = () => {
@@ -165,12 +178,17 @@ function HomeScreen({ navigation, aoDeslogar }) {
   const executarInicioViagem = (veiculoSelecionado) => executar(async () => {
     const viagem = await iniciarViagem(veiculoSelecionado.id);
     setViagemAtiva(viagem); setModalEscolherVeiculoViagem(false);
+    setVersaoDados(versao => versao + 1);
   });
 
   // Exibe apenas a mensagem da revisão e inicia a viagem ao clicar em OK
   const selecionarVeiculoParaViagem = (item) => {
     const alerta = verificarAlertaRevisao(item.ultimoKm, item.proximaRevisaoKm);
     if (alerta) {
+      if (Platform.OS === 'web') {
+        if (window.confirm(`${alerta.titulo}\n\n${alerta.mensagem}\n\nDeseja iniciar a viagem?`)) executarInicioViagem(item);
+        return;
+      }
       Alert.alert(
         alerta.titulo,
         alerta.mensagem,
@@ -188,20 +206,22 @@ function HomeScreen({ navigation, aoDeslogar }) {
     if (!Number.isSafeInteger(kmFinal)) throw new Error('KM final inválido.');
     await finalizarViagem(viagemAtiva.id, kmFinal);
     setViagemAtiva(null); setKmRetorno('');
+    setMensagem({ texto: 'Viagem finalizada. Retorno registrado.' });
+    setVersaoDados(versao => versao + 1);
   });
 
   const salvarCombustivel = () => executar(async () => {
     if (!viagemAtiva) throw new Error('Inicie uma viagem primeiro.');
     await registrarDespesa(viagemAtiva.id, 'abastecimento', valorCombustivel, litrosCombustivel);
     setModalCombustivel(false); setValorCombustivel(''); setLitrosCombustivel('');
-    Alert.alert('Sucesso', 'Abastecimento registrado.');
+    setMensagem({ texto: 'Abastecimento registrado.' });
   });
 
   const salvarPedagio = () => executar(async () => {
     if (!viagemAtiva) throw new Error('Inicie uma viagem primeiro.');
     await registrarDespesa(viagemAtiva.id, 'pedagio', valorPedagio);
     setModalPedagio(false); setValorPedagio('');
-    Alert.alert('Sucesso', 'Pedágio registrado.');
+    setMensagem({ texto: 'Pedágio registrado.' });
   });
 
   const veiculoEmViagem = viagemAtiva ? veiculos.find(v => v.id === viagemAtiva.veiculoId) : null;
@@ -222,6 +242,9 @@ function HomeScreen({ navigation, aoDeslogar }) {
         )}
       </View>
 
+      {!!erroDados && <Text accessibilityRole="alert" style={{ color: '#ff8a80', padding: 12 }}>{erroDados}</Text>}
+      <FeedbackOperacao mensagem={mensagem} />
+
       {viagemAtiva ? (
         /* ================= ESTADO 1: TRAVADO EM VIAGEM ================= */
         <View style={styles.containerCentralizado}>
@@ -241,11 +264,11 @@ function HomeScreen({ navigation, aoDeslogar }) {
 
           <Text style={styles.msgTrava}>⚠️ Checklist bloqueado até a finalização da viagem.</Text>
 
-          <TouchableOpacity style={[styles.btnRota, { backgroundColor: '#e65100' }]} onPress={() => setModalCombustivel(true)}>
+          <TouchableOpacity disabled={ocupado} style={[styles.btnRota, { backgroundColor: '#e65100' }]} onPress={() => { setMensagem(null); setModalCombustivel(true); }}>
             <Text style={styles.txtBtnRota}>⛽ Lançar Combustível</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.btnRota, { backgroundColor: '#6a1b9a' }]} onPress={() => setModalPedagio(true)}>
+          <TouchableOpacity disabled={ocupado} style={[styles.btnRota, { backgroundColor: '#6a1b9a' }]} onPress={() => { setMensagem(null); setModalPedagio(true); }}>
             <Text style={styles.txtBtnRota}>💳 Lançar Pedágio</Text>
           </TouchableOpacity>
 
@@ -262,7 +285,7 @@ function HomeScreen({ navigation, aoDeslogar }) {
 
           <TouchableOpacity 
             style={[styles.btnCentralGrande, { backgroundColor: '#0288d1' }]} 
-            onPress={() => setModalEscolherVeiculoViagem(true)}
+            onPress={() => { setMensagem(null); setModalEscolherVeiculoViagem(true); }}
           >
             <Text style={styles.iconeGrande}>▶️</Text>
             <Text style={styles.txtTituloBotao}>Iniciar Viagem</Text>
@@ -281,11 +304,12 @@ function HomeScreen({ navigation, aoDeslogar }) {
       )}
 
       {/* MODAL: SELECIONAR VEÍCULO PARA VIAGEM */}
-      <Modal visible={modalEscolherVeiculoViagem} animationType="slide" transparent>
+      <Modal visible={modalEscolherVeiculoViagem} animationType="slide" transparent onRequestClose={() => { if (!ocupado) setModalEscolherVeiculoViagem(false); }}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitulo}>Iniciar Viagem</Text>
             <Text style={styles.modalSub}>Toque no veículo para iniciar:</Text>
+            <FeedbackOperacao mensagem={mensagem} />
 
             <FlatList 
               data={veiculos.filter(v => v.status === 'Liberado')} 
@@ -294,7 +318,7 @@ function HomeScreen({ navigation, aoDeslogar }) {
               renderItem={({ item }) => {
                 const alerta = verificarAlertaRevisao(item.ultimoKm, item.proximaRevisaoKm);
                 return (
-                  <TouchableOpacity style={styles.itemVeiculoLista} onPress={() => selecionarVeiculoParaViagem(item)}>
+                  <TouchableOpacity disabled={ocupado} style={styles.itemVeiculoLista} onPress={() => selecionarVeiculoParaViagem(item)}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.txtItemNome}>{item.nome}</Text>
                       <Text style={styles.txtItemPlaca}>{item.placa} • {item.tipo || 'Caminhão'}</Text>
@@ -311,7 +335,7 @@ function HomeScreen({ navigation, aoDeslogar }) {
               ListEmptyComponent={<Text style={styles.txtVazio}>Nenhum veículo disponível no pátio.</Text>}
             />
 
-            <TouchableOpacity style={styles.btnCancelarModal} onPress={() => setModalEscolherVeiculoViagem(false)}>
+            <TouchableOpacity disabled={ocupado} style={styles.btnCancelarModal} onPress={() => setModalEscolherVeiculoViagem(false)}>
               <Text style={styles.txtBotao}>Cancelar</Text>
             </TouchableOpacity>
           </View>
@@ -319,7 +343,7 @@ function HomeScreen({ navigation, aoDeslogar }) {
       </Modal>
 
       {/* MODAL: SELECIONAR VEÍCULO PARA CHECKLIST */}
-      <Modal visible={modalEscolherVeiculoChecklist} animationType="slide" transparent>
+      <Modal visible={modalEscolherVeiculoChecklist} animationType="slide" transparent onRequestClose={() => setModalEscolherVeiculoChecklist(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitulo}>Fazer Checklist</Text>
@@ -352,6 +376,7 @@ function HomeScreen({ navigation, aoDeslogar }) {
                   </TouchableOpacity>
                 );
               }}
+              ListEmptyComponent={<Text style={styles.txtVazio}>Nenhum veículo cadastrado para inspeção.</Text>}
             />
 
             <TouchableOpacity style={styles.btnCancelarModal} onPress={() => setModalEscolherVeiculoChecklist(false)}>
@@ -362,11 +387,12 @@ function HomeScreen({ navigation, aoDeslogar }) {
       </Modal>
 
       {/* MODAL: COMBUSTÍVEL */}
-      <Modal visible={modalCombustivel} animationType="slide" transparent>
+      <Modal visible={modalCombustivel} animationType="slide" transparent onRequestClose={() => { if (!ocupado) setModalCombustivel(false); }}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitulo}>⛽ Lançar Combustível</Text>
             <Text style={styles.modalSub}>{viagemAtiva?.nomeVeiculo} ({viagemAtiva?.placa})</Text>
+            <FeedbackOperacao mensagem={mensagem} />
 
             <Text style={styles.labelModal}>Valor Total Pago (R$) *</Text>
             <TextInput 
@@ -389,10 +415,10 @@ function HomeScreen({ navigation, aoDeslogar }) {
             />
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 15 }}>
-              <TouchableOpacity style={[styles.btnModalAcao, { backgroundColor: '#e65100', flex: 1 }]} onPress={salvarCombustivel}>
-                <Text style={styles.txtBotao}>Salvar</Text>
+              <TouchableOpacity disabled={ocupado} style={[styles.btnModalAcao, { backgroundColor: '#e65100', flex: 1 }]} onPress={salvarCombustivel}>
+                <Text style={styles.txtBotao}>{ocupado ? 'Salvando...' : 'Salvar'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.btnModalAcao, { backgroundColor: '#333' }]} onPress={() => setModalCombustivel(false)}>
+              <TouchableOpacity disabled={ocupado} style={[styles.btnModalAcao, { backgroundColor: '#333' }]} onPress={() => setModalCombustivel(false)}>
                 <Text style={styles.txtBotao}>Cancelar</Text>
               </TouchableOpacity>
             </View>
@@ -401,11 +427,12 @@ function HomeScreen({ navigation, aoDeslogar }) {
       </Modal>
 
       {/* MODAL: PEDÁGIO */}
-      <Modal visible={modalPedagio} animationType="slide" transparent>
+      <Modal visible={modalPedagio} animationType="slide" transparent onRequestClose={() => { if (!ocupado) setModalPedagio(false); }}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitulo}>💳 Lançar Pedágio</Text>
             <Text style={styles.modalSub}>{viagemAtiva?.nomeVeiculo} ({viagemAtiva?.placa})</Text>
+            <FeedbackOperacao mensagem={mensagem} />
 
             <Text style={styles.labelModal}>Valor do Pedágio (R$) *</Text>
             <TextInput 
@@ -418,10 +445,10 @@ function HomeScreen({ navigation, aoDeslogar }) {
             />
 
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 15 }}>
-              <TouchableOpacity style={[styles.btnModalAcao, { backgroundColor: '#6a1b9a', flex: 1 }]} onPress={salvarPedagio}>
-                <Text style={styles.txtBotao}>Salvar</Text>
+              <TouchableOpacity disabled={ocupado} style={[styles.btnModalAcao, { backgroundColor: '#6a1b9a', flex: 1 }]} onPress={salvarPedagio}>
+                <Text style={styles.txtBotao}>{ocupado ? 'Salvando...' : 'Salvar'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.btnModalAcao, { backgroundColor: '#333' }]} onPress={() => setModalPedagio(false)}>
+              <TouchableOpacity disabled={ocupado} style={[styles.btnModalAcao, { backgroundColor: '#333' }]} onPress={() => setModalPedagio(false)}>
                 <Text style={styles.txtBotao}>Cancelar</Text>
               </TouchableOpacity>
             </View>
@@ -434,9 +461,12 @@ function HomeScreen({ navigation, aoDeslogar }) {
 
 // ================= ESTILOS =================
 const styles = StyleSheet.create({
-  containerLogin: { flex: 1, backgroundColor: '#121212', justifyContent: 'center', paddingHorizontal: 25 },
-  tituloApp: { color: '#5db0d6', fontSize: 24, fontWeight: 'bold' },
-  subtituloApp: { color: '#888', marginBottom: 25, fontSize: 14 },
+  containerLogin: { flex: 1, backgroundColor: '#121212', justifyContent: 'center', alignItems: 'center' },
+  scrollLogin: { flex: 1, width: '100%' },
+  conteudoLogin: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 32 },
+  formularioLogin: { width: '100%', maxWidth: 440 },
+  tituloApp: { color: '#5db0d6', fontSize: 24, fontWeight: 'bold', textAlign: 'center' },
+  subtituloApp: { color: '#888', marginTop: 6, marginBottom: 25, fontSize: 14, textAlign: 'center' },
   input: { backgroundColor: '#1a1a1a', color: '#fff', padding: 13, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#333' },
   botaoPrincipal: { backgroundColor: '#5db0d6', padding: 14, borderRadius: 8, alignItems: 'center' },
   txtBotao: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
@@ -541,7 +571,7 @@ export default function Index() {
     return () => { ativo = false; cancelar(); };
   }, []);
 
-  if (estaLogado === null) return null;
+  if (estaLogado === null) return <View style={styles.containerLogin}><ActivityIndicator color="#5db0d6" /><Text style={{ color: '#aaa', marginTop: 12 }}>Verificando acesso...</Text></View>;
 
   return (
     <NavigationContainer independent={true}>

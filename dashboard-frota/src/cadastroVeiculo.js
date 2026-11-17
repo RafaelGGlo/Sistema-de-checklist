@@ -36,9 +36,15 @@ export async function prepararFotoVeiculo(file) {
 }
 
 export function mensagemErroCadastro(error) {
-  const codigo = error?.code?.replace(/^firestore\//, '');
-  if (codigo === 'permission-denied' || codigo === 'unauthenticated') {
-    return 'O banco não autorizou o cadastro. É necessário verificar o acesso do painel ao Firebase.';
+  const codigo = error?.code;
+  if (codigo === '42501' || codigo === 'PGRST301') {
+    return 'O Supabase não autorizou o cadastro. Confira se sua conta está ativa e tem o perfil administrador.';
+  }
+  if (codigo === '23505') {
+    return 'Já existe um veículo com essa placa.';
+  }
+  if (codigo === '23514' || codigo === '22P02') {
+    return 'Confira a placa, o ano e o intervalo de revisão. A placa deve ter sete caracteres, como ABC1234 ou ABC1D23.';
   }
   if (codigo === 'unavailable' || codigo === 'deadline-exceeded') {
     return 'Não foi possível confirmar o cadastro. Verifique sua conexão e confira a lista de veículos antes de tentar novamente.';
@@ -46,5 +52,5 @@ export function mensagemErroCadastro(error) {
   if (codigo === 'resource-exhausted') {
     return 'O banco atingiu um limite de uso. Tente novamente mais tarde.';
   }
-  return `Não foi possível salvar o veículo. Os dados foram mantidos para você tentar novamente.${codigo ? ` Código: ${codigo}.` : ''}`;
+  return `Não foi possível salvar o veículo. ${error?.message || 'Confira sua conexão e tente novamente.'}${codigo ? ` Código: ${codigo}.` : ''}`;
 }

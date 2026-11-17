@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Image, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import SignatureScreen from './Assinatura';
-import { gerarPdf, compartilharPdf } from './pdf';
+import { gerarPdf, compartilharPdf, salvarPdfNoCelular } from './pdf';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera } from 'expo-camera';
 import { salvarChecklist } from '../lib/frota';
@@ -50,6 +50,7 @@ export default function ChecklistScreen({ route, navigation }) {
   const [concluido, setConcluido] = useState(null);
   const [etapaPdf, setEtapaPdf] = useState('');
   const [pdfPronto, setPdfPronto] = useState(false);
+  const [avisoPdf, setAvisoPdf] = useState('');
   const pdf = useRef(null);
   const salvo = useRef(null);
   const trava = useRef(false);
@@ -118,6 +119,7 @@ export default function ChecklistScreen({ route, navigation }) {
     if (!form.km.trim() || !imagemAssinatura) { setErro('Informe o KM e registre sua assinatura.'); return; }
     trava.current = true; setSalvando(true); setErro('');
     try {
+      setEtapaPdf('Enviando checklist...');
       const dados = montarChecklist(veiculo, perfil?.nome || nomeMotorista, form, fotos, imagemAssinatura);
       await salvarChecklist(dados);
       salvo.current = dados;
@@ -132,25 +134,32 @@ export default function ChecklistScreen({ route, navigation }) {
     } catch (error) { setErro(error.message || 'Falha ao salvar o checklist. Seu rascunho foi mantido.'); }
     finally { trava.current = false; setSalvando(false); setEtapaPdf(''); }
   }
-  async function repetirPdf() {
+  async function repetirPdf(salvarNoCelular = false) {
     if (trava.current) return;
     trava.current = true; setSalvando(true); setErro('');
     try {
       if (!pdf.current) { setEtapaPdf('Gerando PDF com fotos e assinatura...'); pdf.current = await gerarPdf(concluido); setPdfPronto(true); }
-      setEtapaPdf('Escolha o aplicativo para compartilhar o PDF.');
-      await compartilharPdf(pdf.current);
-    } catch (error) { pdf.current = null; setPdfPronto(false); setErro(`${error.message || 'Não foi possível abrir o PDF.'} O checklist já está salvo.`); }
+      setEtapaPdf(salvarNoCelular ? 'Escolha uma pasta para salvar o PDF.' : 'Escolha o aplicativo para compartilhar o PDF.');
+      if (salvarNoCelular) {
+        if (await salvarPdfNoCelular(pdf.current)) setAvisoPdf('PDF salvo na pasta escolhida.');
+      } else await compartilharPdf(pdf.current);
+    } catch (error) {
+      if (error.code === 'PDF_INDISPONIVEL') { pdf.current = null; setPdfPronto(false); }
+      setErro(`${error.message || 'Não foi possível abrir o PDF.'} O checklist já está salvo.`);
+    }
     finally { trava.current = false; setSalvando(false); setEtapaPdf(''); }
   }
   if (concluido) return <SafeAreaView style={s.container}>
     <View style={[s.conteudo, { padding: 20, gap: 12 }]}>
       <Text accessibilityRole="header" style={s.titulo}>{pdfPronto ? 'PDF pronto para compartilhar' : 'Checklist enviado'}</Text>
       <Text style={s.ajuda}>{concluido.nomeVeiculo} • {concluido.placa}</Text>
-      <Text accessibilityRole="status" style={s.ajuda}>{etapaPdf || 'Seu checklist está salvo. Toque em Compartilhar PDF para escolher WhatsApp, e-mail ou outro aplicativo.'}</Text>
+      <Text role="status" accessibilityLiveRegion="polite" style={s.ajuda}>{etapaPdf || (Platform.OS === 'web' ? 'Seu checklist está salvo. Toque em Compartilhar PDF para escolher WhatsApp, e-mail ou outro aplicativo.' : pdfPronto ? 'Seu PDF está pronto. Toque em Salvar PDF no celular para escolher uma pasta, ou em Compartilhar PDF.' : 'Seu checklist está salvo. Você pode gerar e salvar o PDF pelos botões abaixo.')}</Text>
       {Platform.OS === 'web' && <Text style={s.ajuda}>Se o navegador não oferecer compartilhamento de arquivos, o PDF será baixado.</Text>}
+      {!!avisoPdf && <Text role="status" accessibilityLiveRegion="polite" style={s.ajuda}>{avisoPdf}</Text>}
       {salvando && <ActivityIndicator accessibilityLabel={etapaPdf || 'Preparando PDF'} color="#5db0d6" />}
       {!!erro && <Text accessibilityRole="alert" style={s.erro}>{erro}</Text>}
-      <Botao principal disabled={salvando} onPress={repetirPdf}>{salvando ? 'Preparando PDF...' : 'Compartilhar PDF'}</Botao>
+      <Botao principal disabled={salvando} onPress={() => repetirPdf()}>{salvando ? 'Preparando PDF...' : 'Compartilhar PDF'}</Botao>
+      {Platform.OS !== 'web' && <Botao disabled={salvando} onPress={() => repetirPdf(true)}>Salvar PDF no celular</Botao>}
       <Botao disabled={salvando} onPress={() => navigation.goBack()}>Concluir</Botao>
     </View>
   </SafeAreaView>;
@@ -160,7 +169,7 @@ export default function ChecklistScreen({ route, navigation }) {
       <Text style={s.titulo}>Assinatura do motorista</Text><Text style={s.ajuda}>Assine com o dedo no quadro branco.</Text>
       <View style={s.assinatura}>{assinando && <SignatureScreen ref={assinatura} onOK={enviar} onEmpty={() => setErro('Registre sua assinatura antes de enviar.')} onBegin={() => setErro('')} onError={() => setErro('Não foi possível carregar a assinatura. Volte ao checklist e tente novamente.')} imageType="image/png" backgroundColor="#ffffff" penColor="#111111" androidLayerType="software" webStyle=".m-signature-pad {box-shadow: none; border: none; margin: 0; top: 0; left: 0; width: 100%; height: 100%;} .m-signature-pad--body {border: none; inset: 0;} .m-signature-pad--footer {display: none;}" />}</View>
       {!!erro && <Text accessibilityRole="alert" style={s.erro}>{erro}</Text>}
-      {salvando && <ActivityIndicator color="#5db0d6" />}
+      {salvando && <><ActivityIndicator color="#5db0d6" /><Text role="status" accessibilityLiveRegion="polite" style={s.ajuda}>{etapaPdf}</Text></>}
       <Botao principal disabled={salvando} onPress={() => assinatura.current?.readSignature()}>{salvando ? 'Enviando e gerando PDF...' : 'Confirmar e enviar'}</Botao><Botao disabled={salvando} onPress={() => assinatura.current?.clearSignature()}>Limpar assinatura</Botao><Botao disabled={salvando} onPress={() => setAssinando(false)}>Voltar ao checklist</Botao>
 
   </SafeAreaView>;
@@ -176,7 +185,7 @@ export default function ChecklistScreen({ route, navigation }) {
           <View accessibilityRole="progressbar" accessibilityLabel="Progresso das verificações" aria-valuemin={0} aria-valuemax={andamento.total} aria-valuenow={andamento.concluidos} style={s.trilho}><View style={[s.progresso, { width: `${andamento.percentual}%` }]} /></View>
           <Text style={s.ajuda}>Toque na avaliação após conferir cada item. Fotos: {fotosFeitas}/6.</Text>
         </View>
-        {!!draft.aviso && <Text accessibilityRole="status" style={s.ajuda}>{draft.aviso}</Text>}
+        {!!draft.aviso && <Text role="status" accessibilityLiveRegion="polite" style={s.ajuda}>{draft.aviso}</Text>}
         {!!alerta && <Text style={s.alerta}>{alerta}</Text>}
         <View style={s.campos}>
           <View style={s.campo}><Text style={s.label}>KM ATUAL *</Text><TextInput accessibilityLabel="KM atual" style={s.input} keyboardType="numeric" value={form.km} placeholder="Ex: 58200" placeholderTextColor="#888" onChangeText={km => setForm(f => ({ ...f, km }))} /></View>

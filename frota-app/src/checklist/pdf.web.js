@@ -18,3 +18,4 @@ export async function compartilharPdf(arquivo) {
   document.body.appendChild(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+export async function salvarPdfNoCelular(arquivo) { await compartilharPdf(arquivo); return true; }

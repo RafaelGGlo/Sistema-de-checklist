@@ -1,23 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import Usuarios from './pages/Usuarios.jsx';
+import LancamentoOperacional from './pages/LancamentoOperacional.jsx';
+import Dashboard from './pages/Dashboard.jsx';
+import RegistrarRevisao from './pages/RegistrarRevisao.jsx';
 import { prepararFotoVeiculo, mensagemErroCadastro } from './cadastroVeiculo.js';
-import { initializeApp } from "firebase/app";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { 
-  getFirestore, collection, onSnapshot, addDoc, doc, updateDoc, deleteDoc, query, where, orderBy, limit, getDocs 
-} from "firebase/firestore";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyBPAkWJJOJUkVzohGS_Kg4ipJnAlN0fZ6M",
-  authDomain: "projeto-logistica-junco-698b4.firebaseapp.com",
-  projectId: "projeto-logistica-junco-698b4",
-  storageBucket: "projeto-logistica-junco-698b4.firebasestorage.app",
-  messagingSenderId: "1071762650483",
-  appId: "1:1071762650483:web:9dee91a05229737ab30106"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
+import {
+  observarSessao, entrar as entrarSupabase, sair, perfilAtual, observarDados,
+  cadastrarVeiculo as inserirVeiculo, arquivarVeiculo, liberarVeiculo, ultimoChecklist as buscarUltimoChecklist,
+  viagemAtivaDoVeiculo,
+} from './lib/frota';
 
 export default function App() {
   const [usuario, setUsuario] = useState(null);
@@ -27,9 +18,12 @@ export default function App() {
   const [entrando, setEntrando] = useState(false);
   const [erroLogin, setErroLogin] = useState('');
   const [erroDados, setErroDados] = useState('');
-  const [abaAtiva, setAbaAtiva] = useState('patio'); // 'patio' | 'diario' | 'checklists' | 'despesas'
+  const [operacao, setOperacao] = useState(null);
+  const [sucesso, setSucesso] = useState('');
+  const [versaoDados, setVersaoDados] = useState(0);
+  const [abaAtiva, setAbaAtiva] = useState('dashboard');
 
-  // Dados do Firebase
+  // Dados do Supabase
   const [veiculos, setVeiculos] = useState([]);
   const [viagens, setViagens] = useState([]);
   const [checklists, setChecklists] = useState([]);
@@ -68,12 +62,26 @@ export default function App() {
   }, [salvandoVeiculo]);
 
   useEffect(() => {
-    return onAuthStateChanged(auth, (user) => {
-      setUsuario(user);
-      setVerificandoLogin(false);
+    let ativo = true;
+    let versao = 0;
+    const cancelar = observarSessao((user) => {
+      const atual = ++versao;
       setVeiculos([]); setViagens([]); setChecklists([]); setAbastecimentos([]); setPedagios([]);
       setVeiculoDetalhe(null); setChecklistSelecionado(null); setModalVeiculo(false);
-    });
+      setOperacao(null); setSucesso('');
+      if (!user) { setUsuario(null); setVerificandoLogin(false); return; }
+      setTimeout(() => {
+        perfilAtual().then(perfil => {
+          if (perfil.perfil !== 'administrador') throw new Error('Esta conta não tem acesso ao painel de administração.');
+          if (ativo && atual === versao) { setUsuario(user); setVerificandoLogin(false); }
+        }).catch(error => {
+          if (ativo && atual === versao) {
+            setUsuario(null); setVerificandoLogin(false); setErroLogin(error.message);
+          }
+        });
+      }, 0);
+    }, error => setErroLogin(error.message));
+    return () => { ativo = false; cancelar(); };
   }, []);
 
   const entrar = async (event) => {
@@ -82,14 +90,10 @@ export default function App() {
     setEntrando(true);
     setErroLogin('');
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), senha);
+      await entrarSupabase(email.trim(), senha, true);
       setSenha('');
     } catch (error) {
-      setErroLogin(error.code === 'auth/network-request-failed'
-        ? 'Não foi possível conectar. Verifique sua internet.'
-        : error.code === 'auth/too-many-requests'
-          ? 'Muitas tentativas de login. Aguarde e tente novamente.'
-          : 'Não foi possível entrar. Confira seu e-mail e sua senha.');
+      setErroLogin(error.message || 'Não foi possível entrar. Confira seu e-mail e senha.');
     } finally {
       setEntrando(false);
     }
@@ -98,46 +102,43 @@ export default function App() {
   useEffect(() => {
     if (!usuario) return;
     setErroDados('');
-    const tratarErroDados = (error) => setErroDados(error.code === 'permission-denied'
-      ? 'Sua conta não tem permissão para acessar os dados do painel. Verifique as permissões no Firebase.'
-      : `Não foi possível carregar os dados do painel. Código: ${error.code || 'desconhecido'}.`);
-    // 1. Veículos
-    const unsubVeiculos = onSnapshot(collection(db, 'veiculos'), (snap) => {
-      setVeiculos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, tratarErroDados);
+    let ativo = true;
+    const cancelar = [];
+    const erro = error => { if (ativo) setErroDados(error.message || 'Falha ao carregar os dados.'); };
+    perfilAtual().then(perfil => {
+      if (!ativo) return;
+      if (perfil.perfil !== 'administrador') throw new Error('Esta conta não tem acesso ao painel de administração.');
+      cancelar.push(
+        observarDados('veiculos', setVeiculos, erro, { filtros: { ativo: true } }),
+        observarDados('viagens', setViagens, erro, { ordenar: 'saida_em', limite: 100 }),
+        observarDados('checklists', setChecklists, erro, {
+          ordenar: 'realizado_em', limite: 100,
+          // As fotos em base64 ficam no banco; a auditoria usa os itens e a assinatura.
+          campos: 'id,veiculo_id,motorista_id,motorista,nome_veiculo,placa,km,proxima_revisao_km,status,realizado_em,obs_geral,itens,assinatura',
+        }),
+        observarDados('abastecimentos', setAbastecimentos, erro, { ordenar: 'registrado_em', limite: 50 }),
+        observarDados('pedagios', setPedagios, erro, { ordenar: 'registrado_em', limite: 50 }),
+      );
+    }).catch(erro);
+    return () => { ativo = false; cancelar.forEach(fn => fn()); };
+  }, [usuario, versaoDados]);
 
-    // 2. Viagens
-    const qViagens = query(collection(db, 'viagens'), orderBy('dataHoraSaidaTimestamp', 'desc'), limit(100));
-    const unsubViagens = onSnapshot(qViagens, (snap) => {
-      setViagens(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, tratarErroDados);
-
-    // 3. Checklists
-    const qChecklists = query(collection(db, 'checklists'), orderBy('dataHoraFormatada', 'desc'), limit(100));
-    const unsubChecklists = onSnapshot(qChecklists, (snap) => {
-      setChecklists(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, tratarErroDados);
-
-    // 4. Abastecimentos
-    const qAbast = query(collection(db, 'abastecimentos'), orderBy('dataRegistro', 'desc'), limit(50));
-    const unsubAbast = onSnapshot(qAbast, (snap) => {
-      setAbastecimentos(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, tratarErroDados);
-
-    // 5. Pedágios
-    const qPedagio = query(collection(db, 'pedagios'), orderBy('dataRegistro', 'desc'), limit(50));
-    const unsubPedagio = onSnapshot(qPedagio, (snap) => {
-      setPedagios(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, tratarErroDados);
-
-    return () => {
-      unsubVeiculos();
-      unsubViagens();
-      unsubChecklists();
-      unsubAbast();
-      unsubPedagio();
-    };
-  }, [usuario]);
+  const abrirOperacao = dados => { setSucesso(''); setOperacao(dados); };
+  const operacaoSalva = mensagem => {
+    setOperacao(null); setSucesso(mensagem); setErroDados('');
+    setVersaoDados(versao => versao + 1);
+  };
+  const registrarRetorno = async veiculo => {
+    try {
+      const viagem = await viagemAtivaDoVeiculo(veiculo.id);
+      if (!viagem) throw new Error('Este veículo não possui viagem em andamento. Confira o Diário de Bordo.');
+      abrirOperacao({ tipo: 'retorno', viagem });
+    } catch (error) { setErroDados(error.message); }
+  };
+  const abrirChecklist = () => {
+    const url = new URL(import.meta.env.VITE_MOTORISTA_URL || `${window.location.protocol}//${window.location.hostname}:8081`);
+    window.open(url.href, '_blank', 'noopener,noreferrer');
+  };
 
   const handleUploadFoto = async (e) => {
     const file = e.target.files[0];
@@ -172,22 +173,11 @@ export default function App() {
 
     setSalvandoVeiculo(true);
     try {
-      await addDoc(collection(db, 'veiculos'), {
-      nome: nomeVeiculo.trim(),
-      placa: placaVeiculo.toUpperCase().trim(),
-      tipo: tipoVeiculo,
-      ano: anoVeiculo,
-      intervaloRevisao: Number(intervaloRevisao) || 30000,
-      foto: fotoBase64 || '',
-      status: 'Liberado',
-      motoristaAtual: '-',
-      destinoAtual: '-',
-      horaSaidaAtual: '-',
-      ultimoKm: '-',
-      ultimoMotorista: '-',
-      ultimaAvaria: '',
-      ultimaAtualizacao: '-'
-    });
+      await inserirVeiculo({
+        nome: nomeVeiculo.trim(), placa: placaVeiculo.toUpperCase().replace(/[^A-Z0-9]/g, ''),
+        tipo: tipoVeiculo, ano: Number(anoVeiculo),
+        intervalo_revisao: Number(intervaloRevisao) || 30000, foto: fotoBase64 || null,
+      });
 
     setNomeVeiculo(''); setPlacaVeiculo(''); setIntervaloRevisao('30000'); setFotoBase64('');
     setBusca(''); setFiltroStatus('Todos');
@@ -201,50 +191,41 @@ export default function App() {
   };
 
   const removerVeiculo = async (id, nome) => {
-    if (window.confirm(`Deseja realmente excluir ${nome} da frota?`)) {
-      await deleteDoc(doc(db, 'veiculos', id));
+    if (!window.confirm('Arquivar ' + nome + ' da frota? O histórico será preservado.')) return;
+    try {
+      await arquivarVeiculo(id);
+      setVeiculos(anterior => anterior.filter(v => v.id !== id));
       if (veiculoDetalhe?.id === id) setVeiculoDetalhe(null);
-    }
+    } catch (error) { setErroDados(error.message); }
   };
 
   const liberarVeiculoManualmente = async (veiculoId) => {
-    await updateDoc(doc(db, 'veiculos', veiculoId), {
-      status: 'Liberado',
-      motoristaAtual: '-',
-      destinoAtual: '-',
-      horaSaidaAtual: '-',
-      ultimaAvaria: ''
-    });
-    if (veiculoDetalhe) setVeiculoDetalhe(prev => ({ ...prev, status: 'Liberado', motoristaAtual: '-', destinoAtual: '-' }));
-  };
-
-  // Abrir Detalhes do Veículo (Busca o último checklist assinado)
-  const abrirDetalhes = async (v) => {
-    setVeiculoDetalhe(v);
-    setUltimoChecklist(null);
-    setCarregandoDetalhes(true);
-
     try {
-      const q = query(
-        collection(db, 'checklists'),
-        where('veiculoId', '==', v.id),
-        orderBy('dataHoraCriacao', 'desc'),
-        limit(1)
-      );
-      const querySnapshot = await getDocs(q);
-      if (!querySnapshot.empty) {
-        setUltimoChecklist(querySnapshot.docs[0].data());
-      }
-    } catch (e) {
-      console.log("Erro ao buscar inspeção:", e);
-    } finally {
-      setCarregandoDetalhes(false);
-    }
+      await liberarVeiculo(veiculoId);
+      setVeiculoDetalhe(null);
+      setVersaoDados(versao => versao + 1);
+      setSucesso('Veículo liberado para o pátio.');
+    } catch (error) { setErroDados(error.message); }
   };
 
-  const calcularRevisaoCiclica = (kmAtualStr, intervaloConfig) => {
+  const abrirDetalhes = async (v) => {
+    setVeiculoDetalhe(v); setUltimoChecklist(null); setCarregandoDetalhes(true);
+    try { setUltimoChecklist(await buscarUltimoChecklist(v.id)); }
+    catch (error) { setErroDados(error.message); }
+    finally { setCarregandoDetalhes(false); }
+  };
+
+  const calcularRevisaoCiclica = (kmAtualStr, intervaloConfig, revisaoProgramada) => {
     if (!kmAtualStr || kmAtualStr === '-') return { tipo: 'aguardando', texto: 'Aguardando 1º KM' };
     const km = Number(kmAtualStr);
+    if (revisaoProgramada != null && revisaoProgramada !== '-' && revisaoProgramada !== '') {
+      const alvo = Number(revisaoProgramada);
+      const faltam = alvo - km;
+      if (Number.isFinite(alvo)) {
+        if (faltam <= 0) return { tipo: 'vencida', texto: `SAÍDA BLOQUEADA: troca de óleo/revisão em ${alvo.toLocaleString('pt-BR')} KM vencida (+${Math.abs(faltam).toLocaleString('pt-BR')} KM). Realize a manutenção e registre a próxima revisão.` };
+        return { tipo: faltam <= 2000 ? 'alerta' : 'em_dia', texto: `Próxima revisão em ${alvo.toLocaleString('pt-BR')} KM — faltam ${faltam.toLocaleString('pt-BR')} KM` };
+      }
+    }
     const ciclo = Number(intervaloConfig) || 30000;
     if (isNaN(km) || km <= 0) return { tipo: 'aguardando', texto: 'KM não informado' };
 
@@ -337,6 +318,12 @@ export default function App() {
         </div>
 
         <nav style={styles.navMenu}>
+          <button aria-current={abaAtiva === 'dashboard' ? 'page' : undefined} style={abaAtiva === 'dashboard' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('dashboard')}>
+            📊 Dashboard
+          </button>
+          <button style={abaAtiva === 'usuarios' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('usuarios')}>
+            👥 Usuários
+          </button>
           <button style={abaAtiva === 'patio' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('patio')}>
             🏢 Pátio & Em Trânsito
           </button>
@@ -353,37 +340,46 @@ export default function App() {
 
         <div style={{ padding: '15px' }}>
           <button style={styles.addBtn} onClick={() => { setErroCadastro(''); setModalVeiculo(true); }}>+ Novo Veículo</button>
-          <button type="button" style={{ ...styles.cancelBtn, width: '100%', marginTop: '8px' }} onClick={() => signOut(auth)}>Sair</button>
+          <button type="button" style={{ ...styles.cancelBtn, width: '100%', marginTop: '8px' }} onClick={() => sair().catch(error => setErroDados(error.message))}>Sair</button>
         </div>
       </aside>
 
       {/* Conteúdo Principal */}
       <main style={styles.main}>
         {erroDados && <p role="alert" style={{ color: '#ff8a80', marginBottom: '16px' }}>{erroDados}</p>}
+        {sucesso && <p role="status" className="operacao-sucesso">{sucesso}</p>}
         <header style={styles.header}>
           <div>
             <h1 style={styles.title}>
+              {abaAtiva === 'dashboard' && 'Dashboard'}
+              {abaAtiva === 'usuarios' && 'Usuários e Permissões'}
               {abaAtiva === 'patio' && 'Monitoramento de Pátio e Saídas'}
               {abaAtiva === 'diario' && 'Diário de Bordo e Histórico de Utilização'}
               {abaAtiva === 'checklists' && 'Auditoria de Checklists e Assinaturas'}
               {abaAtiva === 'despesas' && 'Controle de Combustível e Pedágios'}
             </h1>
-            <p style={styles.subtitle}>Acompanhamento em tempo real da operação</p>
+            <p style={styles.subtitle}>{abaAtiva === 'dashboard' ? 'Indicadores e prioridades da frota' : abaAtiva === 'usuarios' ? 'Cadastro de contas e controle de acesso à frota' : 'Acompanhamento em tempo real da operação'}</p>
           </div>
           <div style={styles.dateBadge}>
-            📅 {new Date().toLocaleDateString('pt-BR')}
+            📅 {new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
           </div>
         </header>
+        {abaAtiva === 'usuarios' && <Usuarios key={usuario.id} usuarioId={usuario.id} />}
+        {abaAtiva === 'dashboard' && <Dashboard refreshKey={versaoDados} navegar={setAbaAtiva}
+          novaViagem={() => abrirOperacao({ tipo: 'viagem' })}
+          novoAbastecimento={() => abrirOperacao({ tipo: 'abastecimento' })}
+          novoPedagio={() => abrirOperacao({ tipo: 'pedagio' })}
+          novoVeiculo={() => { setErroCadastro(''); setModalVeiculo(true); }} />}
 
         {/* ================= ABA 1: PÁTIO & EM TRÂNSITO ================= */}
         {abaAtiva === 'patio' && (
           <div>
+            <div className="operacao-toolbar">
+              <p>Registre a saída de veículos liberados e acompanhe os retornos.</p>
+              <button className="operacao-primario" onClick={() => abrirOperacao({ tipo: 'viagem' })}>+ Registrar saída</button>
+            </div>
             {/* KPIs */}
             <div style={styles.kpiGrid}>
-              <div style={styles.kpiCard}>
-                <span style={styles.kpiLabel}>Frota Total</span>
-                <h2 style={styles.kpiVal}>{veiculos.length}</h2>
-              </div>
               <div style={{ ...styles.kpiCard, borderColor: '#5db0d6' }}>
                 <span style={{ ...styles.kpiLabel, color: '#5db0d6' }}>🚚 Em Trânsito (Na Rua)</span>
                 <h2 style={{ ...styles.kpiVal, color: '#5db0d6' }}>{totalEmTransito}</h2>
@@ -393,7 +389,7 @@ export default function App() {
                 <h2 style={{ ...styles.kpiVal, color: '#4caf50' }}>{totalNoPatio}</h2>
               </div>
               <div style={{ ...styles.kpiCard, borderColor: '#f44336' }}>
-                <span style={{ ...styles.kpiLabel, color: '#f44336' }}>⚠️ Com Avaria / Retido</span>
+                <span style={{ ...styles.kpiLabel, color: '#f44336' }}>⚠️ Com Avaria</span>
                 <h2 style={{ ...styles.kpiVal, color: '#f44336' }}>{totalAvaria}</h2>
               </div>
             </div>
@@ -426,7 +422,7 @@ export default function App() {
             {/* Grid dos Veículos */}
             <div style={styles.gridVeiculos}>
               {veiculosFiltrados.map(v => {
-                const rev = calcularRevisaoCiclica(v.ultimoKm, v.intervaloRevisao);
+                const rev = calcularRevisaoCiclica(v.ultimoKm, v.intervaloRevisao, v.proximaRevisaoKm);
                 const emTransito = v.status === 'Em Trânsito';
                 return (
                   <div key={v.id} style={{ ...styles.cardVeiculo, borderColor: getBorderColor(v.status) }}>
@@ -450,7 +446,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {v.status === 'Avaria' && v.ultimaAvaria && (
+                    {['Avaria', 'Manutenção'].includes(v.status) && v.ultimaAvaria && (
                       <div style={styles.boxAvaria}>⚠️ <strong>Avaria:</strong> {v.ultimaAvaria}</div>
                     )}
 
@@ -473,8 +469,9 @@ export default function App() {
 
                     <div style={styles.actionRow}>
                       <button style={styles.btnDetail} onClick={() => abrirDetalhes(v)}>Ver Detalhes & Assinatura</button>
+                      {v.status === 'Liberado' && <button style={styles.btnTable} onClick={() => abrirOperacao({ tipo: rev.tipo === 'vencida' ? 'revisao' : 'viagem', veiculoId: v.id, veiculo: v })}>{rev.tipo === 'vencida' ? 'Registrar revisão' : 'Registrar saída'}</button>}
                       {emTransito && (
-                        <button style={styles.btnRelease} onClick={() => liberarVeiculoManualmente(v.id)}>
+                        <button style={styles.btnRelease} onClick={() => registrarRetorno(v)}>
                           Retorno Pátio
                         </button>
                       )}
@@ -482,6 +479,7 @@ export default function App() {
                   </div>
                 );
               })}
+              {!veiculosFiltrados.length && <p style={{ color: '#aaa' }}>{veiculos.length ? 'Nenhum veículo corresponde aos filtros.' : 'Nenhum veículo cadastrado. Use + Novo Veículo para começar.'}</p>}
             </div>
           </div>
         )}
@@ -489,8 +487,9 @@ export default function App() {
         {/* ================= ABA 2: DIÁRIO DE BORDO ================= */}
         {abaAtiva === 'diario' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+            <div className="operacao-toolbar">
               <p style={{ color: '#aaa', margin: 0 }}>Histórico de quem dirigiu, horários e KM rodado.</p>
+              <button className="operacao-primario" onClick={() => abrirOperacao({ tipo: 'viagem' })}>+ Nova viagem</button>
               <button style={styles.exportBtn} onClick={exportarViagensCSV}>📥 Exportar CSV</button>
             </div>
 
@@ -507,6 +506,7 @@ export default function App() {
                     <th style={styles.th}>KM Retorno</th>
                     <th style={styles.th}>KM Rodado</th>
                     <th style={styles.th}>Status</th>
+                    <th style={styles.th}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -517,10 +517,10 @@ export default function App() {
                       <td style={styles.td}><strong>{viagem.nomeVeiculo}</strong> ({viagem.placa})</td>
                       <td style={styles.td}><strong>{viagem.motorista}</strong></td>
                       <td style={styles.td}>{viagem.destino || 'Entrega'}</td>
-                      <td style={styles.td}>{viagem.kmInicial ? `${Number(viagem.kmInicial).toLocaleString('pt-BR')} KM` : '-'}</td>
-                      <td style={styles.td}>{viagem.kmFinal ? `${Number(viagem.kmFinal).toLocaleString('pt-BR')} KM` : '-'}</td>
+                      <td style={styles.td}>{viagem.kmInicial != null ? `${Number(viagem.kmInicial).toLocaleString('pt-BR')} KM` : '-'}</td>
+                      <td style={styles.td}>{viagem.kmFinal != null ? `${Number(viagem.kmFinal).toLocaleString('pt-BR')} KM` : '-'}</td>
                       <td style={styles.td}>
-                        {viagem.kmPercorrido ? (
+                        {viagem.kmPercorrido != null ? (
                           <strong style={{ color: '#4caf50' }}>+{Number(viagem.kmPercorrido).toLocaleString('pt-BR')} KM</strong>
                         ) : '-'}
                       </td>
@@ -529,10 +529,11 @@ export default function App() {
                           {viagem.status === 'Em Andamento' ? 'EM ROTA' : 'FINALIZADA'}
                         </span>
                       </td>
+                      <td style={styles.td}>{viagem.status === 'Em Andamento' && <button style={styles.btnTable} onClick={() => abrirOperacao({ tipo: 'retorno', viagem })}>Registrar retorno</button>}</td>
                     </tr>
                   ))}
                   {viagens.length === 0 && (
-                    <tr><td colSpan="9" style={{ textAlign: 'center', padding: '25px', color: '#666' }}>Nenhuma viagem registrada.</td></tr>
+                    <tr><td colSpan="10" style={{ textAlign: 'center', padding: '25px', color: '#aaa' }}>Nenhuma viagem registrada. Use + Nova viagem para registrar uma saída.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -543,8 +544,12 @@ export default function App() {
         {/* ================= ABA 3: AUDITORIA DE CHECKLISTS ================= */}
         {abaAtiva === 'checklists' && (
           <div>
+            <div className="operacao-toolbar">
+              <p>O preenchimento, as fotos e a assinatura são feitos no aplicativo. Os checklists enviados aparecem nesta auditoria.</p>
+              <button className="operacao-primario" onClick={abrirChecklist}>+ Novo checklist no aplicativo</button>
+            </div>
             <p style={{ color: '#aaa', marginBottom: '15px' }}>
-              Clique em qualquer linha para abrir a inspeção completa e ver a <strong>assinatura digital do motorista</strong>.
+              Use Ver Checklist para abrir a inspeção completa e ver a <strong>assinatura digital do motorista</strong>.
             </p>
             <div style={styles.tableCard}>
               <table style={styles.table}>
@@ -597,6 +602,13 @@ export default function App() {
         {/* ================= ABA 4: COMBUSTÍVEL & PEDÁGIOS ================= */}
         {abaAtiva === 'despesas' && (
           <div>
+            <div className="operacao-toolbar">
+              <p>Registre despesas com ou sem vínculo a uma viagem.</p>
+              <div className="operacao-botoes" style={{ marginTop: 0 }}>
+                <button className="operacao-primario" onClick={() => abrirOperacao({ tipo: 'abastecimento' })}>+ Lançar combustível</button>
+                <button onClick={() => abrirOperacao({ tipo: 'pedagio' })}>+ Lançar pedágio</button>
+              </div>
+            </div>
             <h3 style={{ color: '#fff', marginBottom: '15px' }}>⛽ Lançamentos de Combustível</h3>
             <div style={styles.tableCard}>
               <table style={styles.table}>
@@ -617,12 +629,13 @@ export default function App() {
                       <td style={styles.td}>{a.dataRegistro}</td>
                       <td style={styles.td}><strong>{a.nomeVeiculo}</strong> ({a.placa})</td>
                       <td style={styles.td}>{a.motorista}</td>
-                      <td style={styles.td}>{Number(a.km).toLocaleString('pt-BR')} KM</td>
+                      <td style={styles.td}>{a.km == null ? '—' : `${Number(a.km).toLocaleString('pt-BR')} KM`}</td>
                       <td style={styles.td}>{a.litros} L</td>
                       <td style={styles.td}>R$ {Number(a.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                      <td style={styles.td}>{a.posto}</td>
+                      <td style={styles.td}>{a.posto || '—'}</td>
                     </tr>
                   ))}
+                  {!abastecimentos.length && <tr><td colSpan="7" style={{ ...styles.td, textAlign: 'center', color: '#aaa' }}>Nenhum abastecimento registrado. Use + Lançar combustível.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -646,15 +659,19 @@ export default function App() {
                       <td style={styles.td}><strong>{p.nomeVeiculo}</strong> ({p.placa})</td>
                       <td style={styles.td}>{p.motorista}</td>
                       <td style={styles.td}><strong style={{ color: '#4caf50' }}>R$ {Number(p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></td>
-                      <td style={styles.td}>{p.local}</td>
+                      <td style={styles.td}>{p.local || '—'}</td>
                     </tr>
                   ))}
+                  {!pedagios.length && <tr><td colSpan="5" style={{ ...styles.td, textAlign: 'center', color: '#aaa' }}>Nenhum pedágio registrado. Use + Lançar pedágio.</td></tr>}
                 </tbody>
               </table>
             </div>
           </div>
         )}
       </main>
+      {operacao?.tipo === 'revisao'
+        ? <RegistrarRevisao veiculo={operacao.veiculo} aoFechar={() => setOperacao(null)} aoSalvar={operacaoSalva} />
+        : operacao && <LancamentoOperacional key={`${operacao.tipo}-${operacao.viagem?.id || operacao.veiculoId || ''}`} operacao={operacao} veiculos={veiculos} viagens={viagens} aoFechar={() => setOperacao(null)} aoSalvar={operacaoSalva} />}
 
       {/* ================= MODAL: CADASTRO VEÍCULO ================= */}
       {modalVeiculo && (
@@ -725,7 +742,7 @@ export default function App() {
             )}
 
             <div style={{ ...styles.infoBox, borderLeft: '4px solid #5db0d6', marginBottom: '12px' }}>
-              <p><strong>Status Atual:</strong> {veiculoDetalhe.status === 'Em Trânsito' ? `Em Trânsito com ${veiculoDetalhe.motoristaAtual} (desde ${veiculoDetalhe.horaSaidaAtual})` : 'Disponível no Pátio'}</p>
+              <p><strong>Status Atual:</strong> {veiculoDetalhe.status === 'Em Trânsito' ? `Em Trânsito com ${veiculoDetalhe.motoristaAtual} (desde ${veiculoDetalhe.horaSaidaAtual})` : veiculoDetalhe.status === 'Liberado' ? 'Disponível no Pátio' : veiculoDetalhe.status}</p>
               {veiculoDetalhe.destinoAtual && veiculoDetalhe.destinoAtual !== '-' && (
                 <p><strong>Destino:</strong> {veiculoDetalhe.destinoAtual}</p>
               )}
@@ -735,7 +752,7 @@ export default function App() {
             {/* Diagnóstico de Revisão */}
             <div style={{ ...styles.infoBox, marginBottom: '12px', borderLeft: '4px solid #ff9800' }}>
               <p><strong>Ciclo de Revisão:</strong> A cada {(veiculoDetalhe.intervaloRevisao || 30000).toLocaleString('pt-BR')} KM</p>
-              <p><strong>Diagnóstico:</strong> {calcularRevisaoCiclica(veiculoDetalhe.ultimoKm, veiculoDetalhe.intervaloRevisao).texto}</p>
+              <p><strong>Diagnóstico:</strong> {calcularRevisaoCiclica(veiculoDetalhe.ultimoKm, veiculoDetalhe.intervaloRevisao, veiculoDetalhe.proximaRevisaoKm).texto}</p>
             </div>
 
             <h4 style={{ color: '#fff', borderBottom: '1px solid #333', paddingBottom: '5px', margin: '15px 0 10px 0' }}>Último Checklist Assinado</h4>
@@ -781,13 +798,14 @@ export default function App() {
             )}
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              {veiculoDetalhe.status !== 'Liberado' && (
+              {veiculoDetalhe.status === 'Em Trânsito' && <button style={styles.btnRelease} onClick={() => { registrarRetorno(veiculoDetalhe); setVeiculoDetalhe(null); }}>Registrar retorno</button>}
+              {['Avaria', 'Manutenção'].includes(veiculoDetalhe.status) && (
                 <button style={{ ...styles.btnRelease, flex: 1 }} onClick={() => liberarVeiculoManualmente(veiculoDetalhe.id)}>
                   Liberar para o Pátio
                 </button>
               )}
               <button style={{ ...styles.cancelBtn, backgroundColor: '#d32f2f' }} onClick={() => removerVeiculo(veiculoDetalhe.id, veiculoDetalhe.nome)}>
-                Excluir
+                Arquivar
               </button>
               <button style={styles.cancelBtn} onClick={() => setVeiculoDetalhe(null)}>Fechar</button>
             </div>
@@ -869,12 +887,12 @@ const styles = {
   exportBtn: { backgroundColor: '#333', color: '#5db0d6', border: '1px solid #5db0d6', padding: '9px 14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '13px' },
   cancelBtn: { backgroundColor: '#333', color: '#fff', border: 'none', padding: '11px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
   btnTable: { backgroundColor: '#282828', color: '#5db0d6', border: '1px solid #444', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
-  main: { flex: 1, padding: '25px 35px', boxSizing: 'border-box', overflowY: 'auto', height: '100vh' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #222', paddingBottom: '15px' },
+  main: { flex: 1, minWidth: 0, padding: '25px 35px', boxSizing: 'border-box', overflowY: 'auto', height: '100vh' },
+  header: { display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #222', paddingBottom: '15px' },
   title: { margin: 0, fontSize: '24px', fontWeight: 'bold', color: '#ffffff' },
   subtitle: { color: '#888', margin: '4px 0 0 0', fontSize: '14px' },
   dateBadge: { fontSize: '14px', fontWeight: 'bold', color: '#5db0d6', backgroundColor: '#1e1e1e', padding: '8px 14px', borderRadius: '6px', border: '1px solid #333' },
-  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px', marginBottom: '20px' },
+  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '20px' },
   kpiCard: { backgroundColor: '#1a1a1a', padding: '16px', borderRadius: '8px', border: '1px solid #282828', textAlign: 'center' },
   kpiLabel: { fontSize: '13px', color: '#aaa', display: 'block', marginBottom: '4px' },
   kpiVal: { margin: 0, fontSize: '24px', fontWeight: 'bold', color: '#fff' },
