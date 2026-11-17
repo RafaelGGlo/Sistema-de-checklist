@@ -45,7 +45,12 @@ try {
     if (url.pathname.endsWith('/auth/v1/user')) return json(usuario);
     if (url.pathname.endsWith('/rest/v1/usuarios')) return json(perfil);
     if (url.pathname.endsWith('/rest/v1/veiculos')) return json([{ id: 'v1', nome: 'Van Teste', placa: 'ABC1234', ultimo_km: 1000, proxima_revisao_km: 10000, ativo: true, status: 'Liberado' }]);
-    if (url.pathname.includes('/rpc/')) { envios++; return json({}); }
+    if (url.pathname.includes('/rpc/')) {
+      const dados = req.postDataJSON().p_dados;
+      assert.deepEqual(Object.keys(dados.fotos).sort(), ['painel', 'cabine', 'ldEsq', 'ldDir', 'traseira', 'frente'].sort());
+      for (const foto of Object.values(dados.fotos)) assert.match(foto, /^data:image\/jpeg;base64,.+/);
+      envios++; return json({});
+    }
     if (url.pathname.includes('/rest/v1/')) return json([]);
     throw new Error(`Requisição externa inesperada: ${url.pathname}`);
   });
@@ -78,16 +83,26 @@ try {
   await page.getByText('Informe o KM atual antes de assinar!', { exact: true }).waitFor();
   await page.getByLabel('KM atual', { exact: true }).fill('1000');
   await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
-  await page.getByText('Atenção ao KM', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'As 6 fotos são obrigatórias. Faltam: Painel, Cabine, Lado Esquerdo, Lado Direito, Traseira, Frente.' }).waitFor();
+  assert.equal(await page.getByText('Assinatura do motorista', { exact: true }).count(), 0);
+  assert.equal(await page.getByText('Atenção ao KM', { exact: true }).count(), 0);
+  assert.equal(envios, 0);
   await page.getByLabel('KM atual', { exact: true }).fill('1234');
   await page.getByRole('button', { name: 'Iluminação & Faróis', exact: true }).click();
+  // A pré-visualização descartada não pode contar como uma foto confirmada.
+  await page.getByRole('button', { name: 'Iniciar captura das 6 fotos', exact: true }).click();
+  await page.getByRole('button', { name: 'Tirar foto', exact: true }).click();
+  await page.getByRole('button', { name: 'Usar foto', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Sair da câmera', exact: true }).click();
+  await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Faltam: Painel, Cabine, Lado Esquerdo, Lado Direito, Traseira, Frente.' }).waitFor();
+  assert.equal(envios, 0);
   await page.getByRole('button', { name: 'Iniciar captura das 6 fotos', exact: true }).click();
   for (let i = 1; i <= 6; i++) {
-    await page.getByText(i <= 2 ? `Foto ${i}/6` : `Foto ${i - 2}/4`, { exact: true }).waitFor();
+    await page.getByText(i <= 2 ? `Foto ${i}/6` : i === 6 ? 'Foto 1/1' : `Foto ${i - 2}/4`, { exact: true }).waitFor();
     assert.equal(await page.locator('video').count(), 1);
     // Uma marca no nó de vídeo prova que a câmera não foi desmontada entre fotos.
-    if (i === 1 || i === 3) await page.locator('video').evaluate(video => { video.dataset.teste = 'camera-persistente'; });
+    if (i === 1 || i === 3 || i === 6) await page.locator('video').evaluate(video => { video.dataset.teste = 'camera-persistente'; });
     assert.equal(await page.locator('video').getAttribute('data-teste'), 'camera-persistente');
     await page.getByRole('button', { name: 'Tirar foto', exact: true }).click();
     await page.getByRole('button', { name: 'Usar foto', exact: true }).waitFor();
@@ -100,10 +115,28 @@ try {
     if (i === 2) {
       await page.getByRole('button', { name: 'Sair da câmera', exact: true }).click();
       await page.getByRole('button', { name: 'Painel: ver ou refazer foto', exact: true }).waitFor();
+      await page.reload(); await abrirChecklist();
+      await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: 'Faltam: Lado Esquerdo, Lado Direito, Traseira, Frente.' }).waitFor();
+      assert.equal(await page.getByText('Assinatura do motorista', { exact: true }).count(), 0);
+      assert.equal(envios, 0);
       await page.getByRole('button', { name: 'Continuar captura (4 restantes)', exact: true }).click();
+    }
+    if (i === 5) {
+      await page.getByRole('button', { name: 'Sair da câmera', exact: true }).click();
+      await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
+      await page.getByRole('alert').filter({ hasText: 'Faltam: Frente.' }).waitFor();
+      assert.equal(await page.getByText('Assinatura do motorista', { exact: true }).count(), 0);
+      assert.equal(envios, 0);
+      await page.getByRole('button', { name: 'Continuar captura (1 restantes)', exact: true }).click();
     }
   }
   await page.getByRole('button', { name: 'Refazer sequência das 6 fotos', exact: true }).waitFor();
+  await page.getByLabel('KM atual', { exact: true }).fill('1000');
+  await page.getByRole('button', { name: 'Assinar e enviar checklist', exact: true }).click();
+  await page.getByText('Atenção ao KM', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await page.getByLabel('KM atual', { exact: true }).fill('1234');
   // Importação múltipla tem revisão explícita dos destinos antes de gravar.
   const imagemGaleria = await page.evaluate(() => {
     const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240;

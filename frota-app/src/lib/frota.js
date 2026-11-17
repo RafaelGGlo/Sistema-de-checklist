@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { exigirFotos } from '../checklist/model.mjs';
 
 function cliente() {
   if (!supabase) throw new Error('Configure a URL e a chave publicável do Supabase no arquivo .env.local.');
@@ -123,5 +124,6 @@ export async function registrarDespesa(viagemId, tipo, valor, litros = null) {
   }));
 }
 export async function salvarChecklist(dados) {
+  exigirFotos(dados.fotos);
   return verificar(await cliente().rpc('frota_salvar_checklist', { p_dados: dados }));
 }

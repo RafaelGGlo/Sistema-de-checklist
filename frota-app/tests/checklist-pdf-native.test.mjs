@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
 import { gerarPdfNativo } from '../src/checklist/pdfNativo.mjs';
 import { documentoChecklist } from '../src/checklist/pdfDocumento.mjs';
-import { formularioInicial, montarChecklist } from '../src/checklist/model.mjs';
+import { FOTOS, formularioInicial, montarChecklist } from '../src/checklist/model.mjs';
 
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==';
 const veiculo = { id: 'v1', nome: 'Caminhão', placa: 'ABC1234' };
 const form = formularioInicial(veiculo); form.km = '1234';
-const dados = montarChecklist(veiculo, 'José', form, {}, png);
+const dados = montarChecklist(veiculo, 'José', form, Object.fromEntries(FOTOS.map(foto => [foto.id, png])), png);
 
 test('PDF nativo é guardado antes de disponibilizar o arquivo', async () => {
   const uri = await gerarPdfNativo(dados, {

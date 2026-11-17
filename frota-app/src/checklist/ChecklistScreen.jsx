@@ -6,7 +6,7 @@ import { gerarPdf, compartilharPdf, salvarPdfNoCelular } from './pdf';
 import * as ImagePicker from 'expo-image-picker';
 import { Camera } from 'expo-camera';
 import { salvarChecklist } from '../lib/frota';
-import { CATEGORIAS, FOTOS, fotosPendentes, marcarCategoria, montarChecklist, progresso } from './model.mjs';
+import { CATEGORIAS, FOTOS, exigirFotos, fotosPendentes, marcarCategoria, montarChecklist, progresso } from './model.mjs';
 import { useChecklistDraft } from './useChecklistDraft';
 import { comprimirFoto } from './imagens';
 import CameraSequence from './CameraSequence';
@@ -109,6 +109,7 @@ export default function ChecklistScreen({ route, navigation }) {
   function avancarAssinatura() {
     setErro('');
     if (!form.km.trim()) { setErro('Informe o KM atual antes de assinar!'); return; }
+    try { exigirFotos(fotos); } catch (error) { setErro(error.message); return; }
     const anterior = String(veiculo.ultimoKm || '').trim();
     if (anterior && anterior !== '-' && form.km.trim() === anterior) {
       setConfirmacao({ titulo: 'Atenção ao KM', mensagem: 'O KM atual não mudou em relação ao último registrado. Deseja prosseguir mesmo assim?', confirmar: () => setAssinando(true) });
@@ -116,6 +117,7 @@ export default function ChecklistScreen({ route, navigation }) {
   }
   async function enviar(imagemAssinatura) {
     if (trava.current || salvo.current) return;
+    try { exigirFotos(fotos); } catch (error) { setAssinando(false); setErro(error.message); return; }
     if (!form.km.trim() || !imagemAssinatura) { setErro('Informe o KM e registre sua assinatura.'); return; }
     trava.current = true; setSalvando(true); setErro('');
     try {
@@ -205,7 +207,8 @@ export default function ChecklistScreen({ route, navigation }) {
           </View>;
         })}
         <View style={s.secao}>
-          <View style={s.entre}><Text accessibilityRole="header" style={s.tituloCategoria}>Fotos do veículo</Text><Text style={s.destaque}>{fotosFeitas}/6</Text></View>
+          <View style={s.entre}><Text accessibilityRole="header" style={s.tituloCategoria}>Fotos do veículo (obrigatórias)</Text><Text style={s.destaque}>{fotosFeitas}/6</Text></View>
+          <Text style={s.ajuda}>{pendentes.length ? `Confirme as 6 fotos para assinar e enviar. Faltam: ${pendentes.map(foto => foto.label).join(', ')}.` : 'As 6 fotos obrigatórias foram confirmadas.'}</Text>
           <Text style={s.ajuda}>Painel, cabine, duas laterais, traseira e frente. Confira a nitidez do KM.</Text>
           <Botao principal disabled={ocupado} onPress={() => abrirCamera(listaCaptura)}>{fotosFeitas === 0 ? 'Iniciar captura das 6 fotos' : pendentes.length ? `Continuar captura (${pendentes.length} restantes)` : 'Refazer sequência das 6 fotos'}</Botao>
           <Botao disabled={ocupado} onPress={() => escolherGaleria(listaCaptura)}>Selecionar da galeria</Botao>

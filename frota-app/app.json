@@ -2,7 +2,7 @@
   "expo": {
     "name": "Frota Junco",
     "slug": "frota-app",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "icon": "./assets/images/icon.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -13,7 +13,7 @@
     "android": {
       "package": "com.frotajunco.app",
       "edgeToEdge": true,
-      "versionCode": 5,
+      "versionCode": 6,
       "runtimeVersion": {
         "policy": "fingerprint"
       }

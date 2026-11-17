@@ -55,7 +55,13 @@ export function progresso(form) {
   const concluidos = ITENS.filter(i => form.revisados[i.id]).length;
   return { concluidos, total: ITENS.length, percentual: Math.round(concluidos / ITENS.length * 100) };
 }
-export function fotosPendentes(fotos) { return FOTOS.filter(foto => !fotos[foto.id]); }
+export function fotosPendentes(fotos) {
+  return FOTOS.filter(foto => typeof fotos?.[foto.id] !== 'string' || !fotos[foto.id].trim());
+}
+export function exigirFotos(fotos) {
+  const pendentes = fotosPendentes(fotos);
+  if (pendentes.length) throw new Error(`As 6 fotos são obrigatórias. Faltam: ${pendentes.map(foto => foto.label).join(', ')}. Adicione e confirme as fotos antes de assinar e enviar.`);
+}
 export function restaurarFormulario(veiculo, salvo) {
   const inicial = formularioInicial(veiculo);
   if (!salvo || typeof salvo !== 'object') return inicial;
@@ -71,6 +77,7 @@ export function restaurarFormulario(veiculo, salvo) {
   return inicial;
 }
 export function montarChecklist(veiculo, motorista, form, fotos, assinatura, agora = new Date()) {
+  exigirFotos(fotos);
   const itens = ITENS.map(i => {
     const valor = form.valores[i.id];
     return {
