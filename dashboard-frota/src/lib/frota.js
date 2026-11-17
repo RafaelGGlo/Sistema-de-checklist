@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { consultarDados } from './consultaDados.mjs';
 
 function cliente() {
   if (!supabase) throw new Error('Configure a URL e a chave publicável do Supabase no arquivo .env.local.');
@@ -65,18 +66,14 @@ export function observarSessao(callback, erro = () => {}) {
 }
 
 // Realtime acelera a atualização; polling também cobre reconexões e perda de eventos.
-export function observarDados(tabela, callback, erro, { ordenar, limite, filtros = {}, campos = '*' } = {}) {
+export function observarDados(tabela, callback, erro, opcoes = {}) {
   let ativo = true, carregando = false, repetir = false;
   const carregar = async () => {
     if (!ativo || document.visibilityState === 'hidden') return;
     if (carregando) { repetir = true; return; }
     carregando = true;
     try {
-      let q = cliente().from(tabela).select(campos);
-      for (const [campo, valor] of Object.entries(filtros)) q = q.eq(campo, valor);
-      if (ordenar) q = q.order(ordenar, { ascending: false });
-      if (limite) q = q.limit(limite);
-      const rows = verificar(await q);
+      const rows = await consultarDados(cliente(), tabela, opcoes);
       if (ativo) callback(rows.map(adaptar));
     } catch (error) { if (ativo) erro?.(error); }
     finally {

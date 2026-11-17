@@ -12,9 +12,10 @@ function kmValido(value) {
   return Number(value);
 }
 
-export default function LancamentoOperacional({ operacao, veiculos, viagens, aoFechar, aoSalvar }) {
+export default function LancamentoOperacional({ operacao, veiculos, aoFechar, aoSalvar }) {
   const { tipo, veiculoId = '', viagem } = operacao;
   const [motoristas, setMotoristas] = useState([]);
+  const [viagens, setViagens] = useState([]);
   const [carregando, setCarregando] = useState(tipo !== 'retorno');
   const [erroLista, setErroLista] = useState('');
   const [erro, setErro] = useState('');
@@ -39,6 +40,14 @@ export default function LancamentoOperacional({ operacao, veiculos, viagens, aoF
       setMotoristas(rows); setCarregando(false); setErroLista('');
     }, error => { setErroLista(error.message); setCarregando(false); }, { filtros: { ativo: true } });
   }, [tipo]);
+  useEffect(() => {
+    setViagens([]);
+    if (!['abastecimento', 'pedagio'].includes(tipo) || !form.veiculo || !form.motorista) return;
+    return observarDados('viagens', setViagens, error => setErroLista(error.message), {
+      filtros: { veiculo_id: form.veiculo, motorista_id: form.motorista },
+      ordenar: 'saida_em', limite: 100,
+    });
+  }, [tipo, form.veiculo, form.motorista]);
   const veiculo = veiculos.find(v => v.id === form.veiculo);
   const opcoesVeiculos = veiculos.filter(v => tipo !== 'viagem' || v.status === 'Liberado');
   const viagensVinculaveis = viagens.filter(v => v.veiculoId === form.veiculo && v.motoristaId === form.motorista);

@@ -8,7 +8,7 @@ export function diaSP(value) {
 }
 const somarDias = (dia, quantidade) => new Date(Date.parse(`${dia}T12:00:00Z`) + quantidade * 86400000).toISOString().slice(0, 10);
 export function janelaPeriodo(dias, agora = new Date()) {
-  if (![7, 30, 90, 180].includes(dias)) throw new Error('Período inválido.');
+  if (![7, 15, 30, 90, 180].includes(dias)) throw new Error('Período inválido.');
   const hoje = diaSP(agora);
   const inicio = somarDias(hoje, 1 - dias);
   return { dias, hoje, inicio, inicioISO: `${inicio}T03:00:00.000Z`, fimISO: `${somarDias(hoje, 1)}T03:00:00.000Z` };

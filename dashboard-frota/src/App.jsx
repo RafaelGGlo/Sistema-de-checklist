@@ -3,6 +3,7 @@ import Usuarios from './pages/Usuarios.jsx';
 import LancamentoOperacional from './pages/LancamentoOperacional.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import RegistrarRevisao from './pages/RegistrarRevisao.jsx';
+import { janelaPeriodo } from './lib/dashboardModelo.mjs';
 import { prepararFotoVeiculo, mensagemErroCadastro } from './cadastroVeiculo.js';
 import {
   observarSessao, entrar as entrarSupabase, sair, perfilAtual, observarDados,
@@ -22,6 +23,16 @@ export default function App() {
   const [sucesso, setSucesso] = useState('');
   const [versaoDados, setVersaoDados] = useState(0);
   const [abaAtiva, setAbaAtiva] = useState('dashboard');
+  const [ultimoRegistro, setUltimoRegistro] = useState('diario');
+  const [periodosRegistros, setPeriodosRegistros] = useState({ diario: 7, checklists: 7, despesas: 7 });
+  const [carregandoRegistros, setCarregandoRegistros] = useState(false);
+  const [erroRegistros, setErroRegistros] = useState('');
+  const emRegistros = ['diario', 'checklists', 'despesas'].includes(abaAtiva);
+  const diasRegistro = periodosRegistros[abaAtiva];
+  const navegar = aba => {
+    if (['diario', 'checklists', 'despesas'].includes(aba)) setUltimoRegistro(aba);
+    setAbaAtiva(aba);
+  };
 
   // Dados do Supabase
   const [veiculos, setVeiculos] = useState([]);
@@ -110,18 +121,36 @@ export default function App() {
       if (perfil.perfil !== 'administrador') throw new Error('Esta conta não tem acesso ao painel de administração.');
       cancelar.push(
         observarDados('veiculos', setVeiculos, erro, { filtros: { ativo: true } }),
-        observarDados('viagens', setViagens, erro, { ordenar: 'saida_em', limite: 100 }),
-        observarDados('checklists', setChecklists, erro, {
-          ordenar: 'realizado_em', limite: 100,
-          // As fotos em base64 ficam no banco; a auditoria usa os itens e a assinatura.
-          campos: 'id,veiculo_id,motorista_id,motorista,nome_veiculo,placa,km,proxima_revisao_km,status,realizado_em,obs_geral,itens,assinatura',
-        }),
-        observarDados('abastecimentos', setAbastecimentos, erro, { ordenar: 'registrado_em', limite: 50 }),
-        observarDados('pedagios', setPedagios, erro, { ordenar: 'registrado_em', limite: 50 }),
       );
     }).catch(erro);
     return () => { ativo = false; cancelar.forEach(fn => fn()); };
   }, [usuario, versaoDados]);
+
+  useEffect(() => {
+    setViagens([]); setChecklists([]); setAbastecimentos([]); setPedagios([]);
+    setErroRegistros('');
+    if (!usuario || !emRegistros) { setCarregandoRegistros(false); return; }
+    let ativo = true;
+    setCarregandoRegistros(true);
+    const janela = janelaPeriodo(diasRegistro);
+    const fontes = abaAtiva === 'diario' ? [['viagens', 'saida_em', setViagens]]
+      : abaAtiva === 'checklists' ? [['checklists', 'realizado_em', setChecklists]]
+        : [['abastecimentos', 'registrado_em', setAbastecimentos], ['pedagios', 'registrado_em', setPedagios]];
+    const pendentes = new Set(fontes.map(([tabela]) => tabela));
+    const concluir = tabela => { pendentes.delete(tabela); if (ativo && !pendentes.size) setCarregandoRegistros(false); };
+    const cancelar = fontes.map(([tabela, campo, atualizar]) => observarDados(tabela, rows => {
+      if (!ativo) return;
+      atualizar(rows); concluir(tabela);
+    }, error => {
+      if (ativo) { setErroRegistros(error.message || 'Não foi possível carregar os registros.'); concluir(tabela); }
+    }, {
+      ordenar: campo, periodo: { ...janela, campo },
+      // A auditoria usa itens e assinatura; as fotos não precisam ser baixadas na lista.
+      campos: tabela === 'checklists'
+        ? 'id,veiculo_id,motorista_id,motorista,nome_veiculo,placa,km,proxima_revisao_km,status,realizado_em,obs_geral,itens,assinatura' : '*',
+    }));
+    return () => { ativo = false; cancelar.forEach(fn => fn()); };
+  }, [usuario, abaAtiva, emRegistros, diasRegistro, versaoDados]);
 
   const abrirOperacao = dados => { setSucesso(''); setOperacao(dados); };
   const operacaoSalva = mensagem => {
@@ -321,20 +350,14 @@ export default function App() {
           <button aria-current={abaAtiva === 'dashboard' ? 'page' : undefined} style={abaAtiva === 'dashboard' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('dashboard')}>
             📊 Dashboard
           </button>
-          <button style={abaAtiva === 'usuarios' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('usuarios')}>
+          <button aria-current={abaAtiva === 'patio' ? 'page' : undefined} style={abaAtiva === 'patio' ? styles.menuBtnActive : styles.menuBtn} onClick={() => navegar('patio')}>
+            🏢 Pátio e saídas
+          </button>
+          <button aria-current={emRegistros ? 'page' : undefined} style={emRegistros ? styles.menuBtnActive : styles.menuBtn} onClick={() => navegar(ultimoRegistro)}>
+            📋 Registros
+          </button>
+          <button aria-current={abaAtiva === 'usuarios' ? 'page' : undefined} style={abaAtiva === 'usuarios' ? styles.menuBtnActive : styles.menuBtn} onClick={() => navegar('usuarios')}>
             👥 Usuários
-          </button>
-          <button style={abaAtiva === 'patio' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('patio')}>
-            🏢 Pátio & Em Trânsito
-          </button>
-          <button style={abaAtiva === 'diario' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('diario')}>
-            🛣️ Diário de Bordo (Viagens)
-          </button>
-          <button style={abaAtiva === 'checklists' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('checklists')}>
-            📋 Auditoria Checklists
-          </button>
-          <button style={abaAtiva === 'despesas' ? styles.menuBtnActive : styles.menuBtn} onClick={() => setAbaAtiva('despesas')}>
-            ⛽ Combustível & Pedágios
           </button>
         </nav>
 
@@ -354,18 +377,16 @@ export default function App() {
               {abaAtiva === 'dashboard' && 'Dashboard'}
               {abaAtiva === 'usuarios' && 'Usuários e Permissões'}
               {abaAtiva === 'patio' && 'Monitoramento de Pátio e Saídas'}
-              {abaAtiva === 'diario' && 'Diário de Bordo e Histórico de Utilização'}
-              {abaAtiva === 'checklists' && 'Auditoria de Checklists e Assinaturas'}
-              {abaAtiva === 'despesas' && 'Controle de Combustível e Pedágios'}
+              {emRegistros && 'Registros'}
             </h1>
-            <p style={styles.subtitle}>{abaAtiva === 'dashboard' ? 'Indicadores e prioridades da frota' : abaAtiva === 'usuarios' ? 'Cadastro de contas e controle de acesso à frota' : 'Acompanhamento em tempo real da operação'}</p>
+            <p style={styles.subtitle}>{abaAtiva === 'dashboard' ? 'Indicadores e prioridades da frota' : abaAtiva === 'usuarios' ? 'Cadastro de contas e controle de acesso à frota' : emRegistros ? 'Viagens, inspeções e despesas da frota em um só lugar' : 'Acompanhamento em tempo real da operação'}</p>
           </div>
           <div style={styles.dateBadge}>
             📅 {new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
           </div>
         </header>
         {abaAtiva === 'usuarios' && <Usuarios key={usuario.id} usuarioId={usuario.id} />}
-        {abaAtiva === 'dashboard' && <Dashboard refreshKey={versaoDados} navegar={setAbaAtiva}
+        {abaAtiva === 'dashboard' && <Dashboard refreshKey={versaoDados} navegar={navegar}
           novaViagem={() => abrirOperacao({ tipo: 'viagem' })}
           novoAbastecimento={() => abrirOperacao({ tipo: 'abastecimento' })}
           novoPedagio={() => abrirOperacao({ tipo: 'pedagio' })}
@@ -484,8 +505,27 @@ export default function App() {
           </div>
         )}
 
+        {emRegistros && <section className="registros-controles" aria-label="Consultar registros da frota">
+          <div className="registros-tipos" role="group" aria-label="Tipo de registro">
+            {[['diario', 'Viagens', 'Diário de bordo'], ['checklists', 'Checklists', 'Auditoria e assinaturas'], ['despesas', 'Combustível e pedágios', 'Despesas da operação']].map(([aba, titulo, detalhe]) =>
+              <button key={aba} type="button" aria-pressed={abaAtiva === aba} onClick={() => navegar(aba)}>
+                <strong>{titulo}</strong><span>{detalhe}</span>
+              </button>)}
+          </div>
+          <div className="registros-periodo">
+            <div><strong>Período da consulta</strong><p>Inclui hoje, no horário de Brasília.</p></div>
+            <div role="group" aria-label="Período dos registros">
+              {[7, 15, 30].map(dias => <button type="button" key={dias} aria-pressed={diasRegistro === dias}
+                onClick={() => setPeriodosRegistros(anteriores => ({ ...anteriores, [abaAtiva]: dias }))}>Últimos {dias} dias</button>)}
+            </div>
+          </div>
+          <p className="registros-resumo" role="status">{carregandoRegistros ? 'Carregando registros…' : erroRegistros ? 'Consulta não concluída.' :
+            `${abaAtiva === 'diario' ? `${viagens.length} ${viagens.length === 1 ? 'viagem' : 'viagens'}` : abaAtiva === 'checklists' ? `${checklists.length} ${checklists.length === 1 ? 'checklist' : 'checklists'}` : `${abastecimentos.length} ${abastecimentos.length === 1 ? 'abastecimento' : 'abastecimentos'} e ${pedagios.length} ${pedagios.length === 1 ? 'pedágio' : 'pedágios'}`} nos últimos ${diasRegistro} dias.`}</p>
+          {erroRegistros && <p role="alert" className="registros-erro">{erroRegistros}</p>}
+        </section>}
+
         {/* ================= ABA 2: DIÁRIO DE BORDO ================= */}
-        {abaAtiva === 'diario' && (
+        {abaAtiva === 'diario' && !carregandoRegistros && !erroRegistros && (
           <div>
             <div className="operacao-toolbar">
               <p style={{ color: '#aaa', margin: 0 }}>Histórico de quem dirigiu, horários e KM rodado.</p>
@@ -533,7 +573,7 @@ export default function App() {
                     </tr>
                   ))}
                   {viagens.length === 0 && (
-                    <tr><td colSpan="10" style={{ textAlign: 'center', padding: '25px', color: '#aaa' }}>Nenhuma viagem registrada. Use + Nova viagem para registrar uma saída.</td></tr>
+                    <tr><td colSpan="10" style={{ textAlign: 'center', padding: '25px', color: '#aaa' }}>Nenhuma viagem neste período. Selecione outro período ou registre uma nova saída.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -542,7 +582,7 @@ export default function App() {
         )}
 
         {/* ================= ABA 3: AUDITORIA DE CHECKLISTS ================= */}
-        {abaAtiva === 'checklists' && (
+        {abaAtiva === 'checklists' && !carregandoRegistros && !erroRegistros && (
           <div>
             <div className="operacao-toolbar">
               <p>O preenchimento, as fotos e a assinatura são feitos no aplicativo. Os checklists enviados aparecem nesta auditoria.</p>
@@ -591,7 +631,7 @@ export default function App() {
                     </tr>
                   ))}
                   {checklists.length === 0 && (
-                    <tr><td colSpan="8" style={{ textAlign: 'center', padding: '25px', color: '#666' }}>Nenhum checklist registrado.</td></tr>
+                    <tr><td colSpan="8" style={{ textAlign: 'center', padding: '25px', color: '#aaa' }}>Nenhum checklist neste período. Selecione outro período para consultar as inspeções.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -600,7 +640,7 @@ export default function App() {
         )}
 
         {/* ================= ABA 4: COMBUSTÍVEL & PEDÁGIOS ================= */}
-        {abaAtiva === 'despesas' && (
+        {abaAtiva === 'despesas' && !carregandoRegistros && !erroRegistros && (
           <div>
             <div className="operacao-toolbar">
               <p>Registre despesas com ou sem vínculo a uma viagem.</p>
@@ -635,7 +675,7 @@ export default function App() {
                       <td style={styles.td}>{a.posto || '—'}</td>
                     </tr>
                   ))}
-                  {!abastecimentos.length && <tr><td colSpan="7" style={{ ...styles.td, textAlign: 'center', color: '#aaa' }}>Nenhum abastecimento registrado. Use + Lançar combustível.</td></tr>}
+                  {!abastecimentos.length && <tr><td colSpan="7" style={{ ...styles.td, textAlign: 'center', color: '#aaa' }}>Nenhum abastecimento neste período.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -662,7 +702,7 @@ export default function App() {
                       <td style={styles.td}>{p.local || '—'}</td>
                     </tr>
                   ))}
-                  {!pedagios.length && <tr><td colSpan="5" style={{ ...styles.td, textAlign: 'center', color: '#aaa' }}>Nenhum pedágio registrado. Use + Lançar pedágio.</td></tr>}
+                  {!pedagios.length && <tr><td colSpan="5" style={{ ...styles.td, textAlign: 'center', color: '#aaa' }}>Nenhum pedágio neste período.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -671,7 +711,7 @@ export default function App() {
       </main>
       {operacao?.tipo === 'revisao'
         ? <RegistrarRevisao veiculo={operacao.veiculo} aoFechar={() => setOperacao(null)} aoSalvar={operacaoSalva} />
-        : operacao && <LancamentoOperacional key={`${operacao.tipo}-${operacao.viagem?.id || operacao.veiculoId || ''}`} operacao={operacao} veiculos={veiculos} viagens={viagens} aoFechar={() => setOperacao(null)} aoSalvar={operacaoSalva} />}
+        : operacao && <LancamentoOperacional key={`${operacao.tipo}-${operacao.viagem?.id || operacao.veiculoId || ''}`} operacao={operacao} veiculos={veiculos} aoFechar={() => setOperacao(null)} aoSalvar={operacaoSalva} />}
 
       {/* ================= MODAL: CADASTRO VEÍCULO ================= */}
       {modalVeiculo && (
