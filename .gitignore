@@ -1,0 +1,14 @@
+# Dependencias, logs e arquivos locais
+node_modules/
+*.log
+.env
+.env.*
+!.env.example
+
+# Artefatos de testes e cache do Supabase
+/artifacts/
+/supabase/.temp/
+
+# Scripts locais de recuperacao de acesso
+/database/recriar_rafael_admin_teste.sql
+/database/trocar_senha_rafael_teste.sql
