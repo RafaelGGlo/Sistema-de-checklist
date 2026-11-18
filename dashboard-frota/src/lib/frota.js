@@ -124,6 +124,10 @@ export async function ultimoChecklist(id) {
     .order('realizado_em', { ascending: false }).limit(1));
   return rows[0] ? adaptar(rows[0]) : null;
 }
+export async function fotosDoChecklist(id) {
+  const row = verificar(await cliente().from('checklists').select('fotos').eq('id', id).single());
+  return row.fotos || {};
+}
 export async function iniciarViagem(id) {
   return adaptar(verificar(await cliente().rpc('frota_iniciar_viagem', { p_veiculo_id: id })));
 }

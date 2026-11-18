@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Usuarios from './pages/Usuarios.jsx';
+import FotosChecklist from './components/FotosChecklist.jsx';
 import LancamentoOperacional from './pages/LancamentoOperacional.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import RegistrarRevisao from './pages/RegistrarRevisao.jsx';
@@ -589,7 +590,7 @@ export default function App() {
               <button className="operacao-primario" onClick={abrirChecklist}>+ Novo checklist no aplicativo</button>
             </div>
             <p style={{ color: '#aaa', marginBottom: '15px' }}>
-              Use Ver Checklist para abrir a inspeção completa e ver a <strong>assinatura digital do motorista</strong>.
+              Use Ver Checklist para abrir a inspeção completa e ver as <strong>fotos do veículo e a assinatura digital do motorista</strong>.
             </p>
             <div style={styles.tableCard}>
               <table style={styles.table}>
@@ -856,7 +857,7 @@ export default function App() {
       {/* ================= MODAL 2: VISUALIZAR CHECKLIST SELECIONADO DA AUDITORIA ================= */}
       {checklistSelecionado && (
         <div style={styles.modalOverlay}>
-          <div style={{ ...styles.modal, width: '500px', maxHeight: '90vh', overflowY: 'auto' }}>
+          <div style={{ ...styles.modal, width: '500px', maxWidth: 'calc(100vw - 24px)', maxHeight: '90vh', overflowY: 'auto' }}>
             <h3 style={{ color: '#fff', marginTop: 0 }}>Checklist de {checklistSelecionado.nomeVeiculo} ({checklistSelecionado.placa})</h3>
             
             <div style={styles.infoBox}>
@@ -881,6 +882,8 @@ export default function App() {
             {checklistSelecionado.obsGeral ? (
               <p style={{ marginTop: '10px', fontSize: '13px', color: '#ccc' }}><strong>Obs:</strong> {checklistSelecionado.obsGeral}</p>
             ) : null}
+
+            <FotosChecklist key={checklistSelecionado.id} checklistId={checklistSelecionado.id} />
 
             {/* ASSINATURA */}
             {checklistSelecionado.assinatura ? (

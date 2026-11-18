@@ -34,6 +34,20 @@ Cópias locais em `C:/Users/Rafael/Documents/Projetos/Backups`:
 
 A reorganização não altera o banco de dados nem os três cenários de apresentação.
 
+## Fotos na auditoria
+
+Ao abrir Ver Checklist, o painel consulta as fotos somente daquela inspeção e
+mostra Painel, Cabine, Lado Esquerdo, Lado Direito, Traseira e Frente, as mesmas
+posições usadas no PDF do aplicativo. Clique na miniatura para ampliar dentro
+da janela. Registros antigos sem imagens mostram Foto não anexada. Se a consulta
+falhar, use Tentar novamente; fotos indisponíveis têm aviso próprio. A assinatura
+permanece abaixo das fotos. Nenhuma alteração no banco ou no aplicativo é necessária.
+
+O teste de navegador usa somente respostas simuladas, sem gravar dados reais.
+Com o Vite em `http://127.0.0.1:3211`, execute `node tests/checklist-fotos.mjs`.
+Se necessário, defina `PLAYWRIGHT_MODULE` com o módulo Playwright instalado e
+`PLAYWRIGHT_EXECUTABLE_PATH` com o executável do Chromium disponível.
+
 ## Validação
 
 ```powershell
